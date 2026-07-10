@@ -41,7 +41,7 @@ const AddUser = () => {
     try {
 
       const res = await fetch(
-        "http://127.0.0.1:8000/api/create-user/",
+        "https://latestvoice.vercel.app/api/create-user/",
         {
           method: "POST",
 
