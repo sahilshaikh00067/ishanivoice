@@ -261,7 +261,6 @@ export default function VoiceCampaign() {
                 className="w-full h-[54px] border border-gray-300 rounded-xl px-4 outline-none focus:border-pink-400 shadow-sm">
                 <option value="1">Delivery Base 15</option>
                 <option value="2">Delivery Base 30</option>
-                <option value="3">Delivery Base 45</option>
               </select>
             </div>
 
