@@ -1,0 +1,310 @@
+import React, { useEffect, useState } from "react";
+import { useNavigate } from "react-router-dom";
+import { Search, UserPlus, KeyRound, Pencil, Users, Wallet } from "lucide-react";
+import { BASE } from "./api";
+
+const ManageUser = () => {
+  const [users, setUsers] = useState([]);
+  const [search, setSearch] = useState("");
+  const [loading, setLoading] = useState(true);
+  const [editUser, setEditUser] = useState(null);
+  const [editForm, setEditForm] = useState({
+    username: "", password: "", role: "", credit: "", addCredit: "",
+    vc_username: "", vc_password: "", vc_caller_id: "", vc_plan_id: "", vc_call_type: "",
+  });
+
+  const navigate = useNavigate();
+  const role = sessionStorage.getItem("role");
+  const loggedUserId = sessionStorage.getItem("user_id");
+
+  useEffect(() => { loadUsers(); }, []);
+
+  // ==============================
+  // LOAD USERS — LIVE FROM BACKEND
+  // ==============================
+  const loadUsers = async () => {
+    try {
+      setLoading(true);
+      const res  = await fetch(`${BASE}/list-users/?user_id=${loggedUserId}`);
+      const data = await res.json();
+      setUsers(Array.isArray(data) ? data : []);
+    } catch (err) {
+      console.log(err);
+      setUsers([]);
+    }
+    setLoading(false);
+  };
+
+  const filteredUsers = users.filter((u) =>
+    u.username?.toLowerCase().includes(search.toLowerCase())
+  );
+
+  // ==============================
+  // EDIT OPEN
+  // ==============================
+  const handleEditOpen = (user) => {
+    setEditUser(user);
+    setEditForm({
+      username: user.username || "",
+      password: "",
+      role: user.role || "user",
+      credit: user.credit || 0,
+      addCredit: "",
+      vc_username: user.vc_username || "",
+      vc_password: user.vc_password || "",
+      vc_caller_id: user.vc_caller_id || "",
+      vc_plan_id: user.vc_plan_id || "2",
+      vc_call_type: user.vc_call_type || "2",
+    });
+  };
+
+  // ==============================
+  // SAVE EDIT — calls Django backend, then refreshes list
+  // ==============================
+  const handleEditSave = async () => {
+    try {
+      const addCredit = Number(editForm.addCredit || 0);
+
+      const res = await fetch(`${BASE}/update-user/`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          user_id: editUser.id,
+          username: editForm.username,
+          password: editForm.password || undefined,
+          role: editForm.role,
+
+          add_credit: addCredit,
+          admin_id: loggedUserId,
+
+          vc_username: editForm.vc_username,
+          vc_password: editForm.vc_password,
+          vc_caller_id: editForm.vc_caller_id,
+          vc_plan_id: editForm.vc_plan_id,
+          vc_call_type: editForm.vc_call_type,
+        }),
+      });
+
+      const data = await res.json();
+      if (data.status === "success") {
+        alert("User Updated Successfully ✅");
+        setEditUser(null);
+        loadUsers();
+      } else {
+        alert("Update Failed ❌");
+      }
+    } catch (err) {
+      alert("Network Error ❌");
+    }
+  };
+
+  // ==============================
+  // RESET PASSWORD
+  // ==============================
+  const handleResetPassword = async (user) => {
+    const newPass = prompt("Enter new password");
+    if (!newPass) return;
+    try {
+      const res = await fetch(`${BASE}/reset-password/`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ user_id: user.id, password: newPass }),
+      });
+      const data = await res.json();
+      if (data.status === "success") {
+        alert("Password Reset ✅");
+        loadUsers();
+      }
+    } catch (err) {
+      alert("Error ❌");
+    }
+  };
+
+  // ==============================
+  // TOGGLE STATUS
+  // ==============================
+  const toggleActive = async (id) => {
+    try {
+      const res = await fetch(`${BASE}/toggle-status/`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ user_id: id }),
+      });
+      const data = await res.json();
+      if (data.status === "success") {
+        loadUsers();
+      }
+    } catch (err) {
+      alert("Error ❌");
+    }
+  };
+
+  const getSubUserCount = (username) => users.filter((u) => u.parent === username).length;
+
+  return (
+    <div className="min-h-screen bg-[#f8f8f8] p-2 md:p-4 overflow-x-hidden">
+      <div className="w-full bg-white rounded-[28px] border border-[#ef7fa4] overflow-hidden shadow-sm">
+
+        {/* HEADER */}
+        <div className="px-4 md:px-7 py-5 border-b border-[#f5d1db] bg-[#fffafb]">
+          <div className="flex items-center justify-between flex-wrap gap-4">
+            <div className="flex items-center gap-4">
+              <div className="w-[58px] h-[58px] rounded-2xl bg-[#fff0f4] border border-[#ef7fa4] flex items-center justify-center">
+                <Users size={26} className="text-[#EA7A9A]" />
+              </div>
+              <div>
+                <h1 className="text-[24px] md:text-[28px] font-[700] text-[#EA7A9A]">Manage Users</h1>
+                <p className="text-[13px] text-gray-500 mt-1">User management panel</p>
+              </div>
+            </div>
+            {role !== "user" && (
+              <button onClick={() => navigate("/adduser")}
+                className="h-[48px] px-5 rounded-2xl bg-[#EA7A9A] hover:bg-[#e3688b] duration-300 text-white text-[14px] font-semibold flex items-center gap-2 shadow-sm">
+                <UserPlus size={17} /> Add User
+              </button>
+            )}
+          </div>
+        </div>
+
+        <div className="p-3 md:p-5">
+          <div className="flex items-center justify-between flex-wrap gap-4 mb-5">
+            <div className="flex items-center gap-2 text-[14px] text-black">
+              <span>Show</span>
+              <select className="w-[70px] h-[40px] border border-[#ef7fa4] rounded-xl px-2 bg-[#fffafb] outline-none text-[14px]">
+                <option>10</option><option>25</option><option>50</option>
+              </select>
+              <span>entries</span>
+            </div>
+            <div className="flex items-center gap-2 flex-wrap">
+              <span className="text-[14px] text-black">Search:</span>
+              <div className="relative">
+                <Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-[#EA7A9A]" />
+                <input type="text" placeholder="Search User" value={search}
+                  onChange={(e) => setSearch(e.target.value)}
+                  className="w-[180px] md:w-[240px] h-[42px] border border-[#ef7fa4] rounded-2xl bg-[#fffafb] pl-10 pr-4 outline-none text-[13px]" />
+              </div>
+              <button onClick={loadUsers} className="text-[#EA7A9A] text-[13px] underline">🔄 Refresh</button>
+            </div>
+          </div>
+
+          {/* TABLE */}
+          <div className="w-full overflow-x-auto rounded-[18px] border border-[#f0d3dc]">
+            <table className="w-full min-w-[1100px]">
+              <thead>
+                <tr className="bg-[#fff5f8]">
+                  {["Sr", "Username", "Credit", "Status", "Date", "Role", "Sub User", "VC Username", "Action"].map((head, i) => (
+                    <th key={i} className="px-3 py-4 border-b border-r border-[#f2dbe2] text-left text-[13px] font-[700] text-[#EA7A9A] whitespace-nowrap">
+                      {head}
+                    </th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {loading ? (
+                  <tr><td colSpan="9" className="text-center py-12 text-[14px]">Loading...</td></tr>
+                ) : filteredUsers.length === 0 ? (
+                  <tr><td colSpan="9" className="text-center py-12 text-[14px]">No data available in table</td></tr>
+                ) : filteredUsers.map((u, index) => (
+                  <tr key={u.id} className="hover:bg-[#fffafb]">
+                    <td className="px-3 py-4 border-b border-r border-[#f5e1e7] text-[13px]">{index + 1}</td>
+                    <td className="px-3 py-4 border-b border-r border-[#f5e1e7] text-[13px]">{u.username}</td>
+                    <td className="px-3 py-4 border-b border-r border-[#f5e1e7]">
+                      <div className="inline-flex items-center gap-2 bg-[#fff0f4] border border-[#ef7fa4] rounded-full px-4 h-[34px]">
+                        <Wallet size={14} className="text-[#EA7A9A]" />
+                        <span className="text-[13px] font-[700] text-[#EA7A9A]">₹ {Number(u.credit || 0)}</span>
+                      </div>
+                    </td>
+                    <td className="px-3 py-4 border-b border-r border-[#f5e1e7]">
+                      <button onClick={() => toggleActive(u.id)}
+                        className={`px-4 h-[34px] rounded-full text-white text-[12px] font-semibold ${u.status === "Active" ? "bg-[#22c55e]" : "bg-[#ef4444]"}`}>
+                        {u.status || "Active"}
+                      </button>
+                    </td>
+                    <td className="px-3 py-4 border-b border-r border-[#f5e1e7] text-[13px] whitespace-nowrap">
+                      {u.created_at ? new Date(u.created_at).toLocaleDateString() : "-"}
+                    </td>
+                    <td className="px-3 py-4 border-b border-r border-[#f5e1e7] text-[13px] capitalize">{u.role}</td>
+                    <td className="px-3 py-4 border-b border-r border-[#f5e1e7] text-[13px]">{getSubUserCount(u.username)}</td>
+                    <td className="px-3 py-4 border-b border-r border-[#f5e1e7] text-[13px]">{u.vc_username || "-"}</td>
+                    <td className="px-3 py-4 border-b border-[#f5e1e7]">
+                      <div className="flex items-center gap-2">
+                        <button onClick={() => handleResetPassword(u)}
+                          className="w-[36px] h-[36px] rounded-xl bg-[#22c55e] text-white flex items-center justify-center">
+                          <KeyRound size={15} />
+                        </button>
+                        <button onClick={() => handleEditOpen(u)}
+                          className="w-[36px] h-[36px] rounded-xl bg-[#3b82f6] text-white flex items-center justify-center">
+                          <Pencil size={15} />
+                        </button>
+                      </div>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+
+      {/* EDIT MODAL */}
+      {editUser && (
+        <div className="fixed inset-0 bg-black/20 backdrop-blur-sm flex items-center justify-center z-50 p-3">
+          <div className="w-full max-w-[520px] bg-white rounded-[24px] border border-[#ef7fa4] p-5 max-h-[90vh] overflow-y-auto">
+            <h2 className="text-[24px] font-[700] text-[#EA7A9A] mb-5">Edit User</h2>
+            <div className="space-y-4">
+              <input value={editForm.username} onChange={(e) => setEditForm({ ...editForm, username: e.target.value })}
+                placeholder="Username" className="modalInput" />
+              <input value={editForm.password} onChange={(e) => setEditForm({ ...editForm, password: e.target.value })}
+                placeholder="Password (leave blank to keep unchanged)" type="password" className="modalInput" />
+              <select value={editForm.role} onChange={(e) => setEditForm({ ...editForm, role: e.target.value })}
+                className="modalInput">
+                <option value="user">User</option>
+                <option value="reseller">Reseller</option>
+                <option value="admin">Admin</option>
+              </select>
+              <input value={editForm.credit || 0} disabled placeholder="Current Credit" className="modalInput" />
+              <input type="number" value={editForm.addCredit} onChange={(e) => setEditForm({ ...editForm, addCredit: e.target.value })}
+                placeholder="Add Credit" className="modalInput" />
+
+              <hr className="border-[#f5d1db]" />
+              <p className="text-[13px] font-semibold text-[#EA7A9A]">VoiceChannel Credentials</p>
+
+              <input value={editForm.vc_username} onChange={(e) => setEditForm({ ...editForm, vc_username: e.target.value })}
+                placeholder="VC Username" className="modalInput" />
+              <input value={editForm.vc_password} onChange={(e) => setEditForm({ ...editForm, vc_password: e.target.value })}
+                placeholder="VC Password" type="password" className="modalInput" />
+              <input value={editForm.vc_caller_id} onChange={(e) => setEditForm({ ...editForm, vc_caller_id: e.target.value })}
+                placeholder="Caller ID" className="modalInput" />
+              <div className="flex gap-3">
+                <select value={editForm.vc_plan_id} onChange={(e) => setEditForm({ ...editForm, vc_plan_id: e.target.value })}
+                  className="modalInput">
+                  <option value="1">Plan 15 pulse</option>
+                  <option value="2">Plan 30 pulse</option>
+                  <option value="3">Plan 45 pulse</option>
+                </select>
+                <select value={editForm.vc_call_type} onChange={(e) => setEditForm({ ...editForm, vc_call_type: e.target.value })}
+                  className="modalInput">
+                  <option value="1">Promotional</option>
+                  <option value="2">Transactional</option>
+                </select>
+              </div>
+            </div>
+            <div className="flex justify-end gap-3 mt-6">
+              <button onClick={() => setEditUser(null)}
+                className="h-[46px] px-5 rounded-xl bg-gray-200 text-black font-semibold text-[14px]">Cancel</button>
+              <button onClick={handleEditSave}
+                className="h-[46px] px-6 rounded-xl bg-[#EA7A9A] text-white font-semibold text-[14px]">Save</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      <style>{`
+        .modalInput{width:100%;height:52px;border:1px solid #ef7fa4;border-radius:14px;padding:0 14px;outline:none;background:#fffafb;font-size:14px;}
+        .modalInput:focus{border:1px solid #EA7A9A;box-shadow:0 0 0 4px rgba(234,122,154,0.10);}
+      `}</style>
+    </div>
+  );
+};
+
+export default ManageUser;

@@ -1,0 +1,582 @@
+import React, { useEffect, useState } from "react";
+import { FaUsers, FaPaperPlane, FaLayerGroup, FaCalendarAlt } from "react-icons/fa";
+import { BASE } from "../api";
+
+export default function VoiceCampaign() {
+
+  const [numbers, setNumbers] = useState("");
+  const [campaignName, setCampaignName] = useState(
+    `${new Date().toLocaleDateString()}-${new Date().getHours()}:${new Date().getMinutes()}`
+  );
+  const [callerId, setCallerId] = useState("");
+  const [callerIds, setCallerIds] = useState([]);   // from backend
+  const [mediaFiles, setMediaFiles] = useState([]);
+  const [selectedMediaId, setSelectedMediaId] = useState("");
+
+  const [showConfirm, setShowConfirm] = useState(false);
+  const [loading, setLoading] = useState(false);
+
+  const [callType, setCallType] = useState("2");
+  const [voicePlan, setVoicePlan] = useState("2");
+  const [retryAttempt, setRetryAttempt] = useState("0");
+  const [retryDuration, setRetryDuration] = useState("0");
+
+  const [showUploadPopup, setShowUploadPopup] = useState(false);
+  const [showGroupPopup, setShowGroupPopup] = useState(false);
+  const [showTestPopup, setShowTestPopup] = useState(false);
+  const [showSchedulePopup, setShowSchedulePopup] = useState(false);
+
+  const [testNumber, setTestNumber] = useState("");
+  const [uploadFile, setUploadFile] = useState(null);
+  const [fromRange, setFromRange] = useState(0);
+  const [toRange, setToRange] = useState(0);
+  const [scheduleDate, setScheduleDate] = useState("");
+  const [scheduleTime, setScheduleTime] = useState("");
+  const [scheduleLoading, setScheduleLoading] = useState(false);
+
+  const groups = [
+    { name: "Demo Group", total: 150 },
+    { name: "Customer Group", total: 350 },
+  ];
+
+  const userId = () => sessionStorage.getItem("user_id");
+
+  // ==============================
+  // NUMBER FORMATTING HELPERS
+  // ==============================
+  // Keeps only digits/commas and auto-inserts a comma after every 10 digits,
+  // so the user never has to type the comma themselves.
+  const formatNumbers = (raw) => {
+    const cleaned = raw.replace(/[^\d,]/g, ""); // strip everything except digits & commas
+    const parts = cleaned.split(",");
+    const result = [];
+    parts.forEach((part) => {
+      if (part.length > 10) {
+        // break any run of digits (typed continuously or pasted) into 10-digit chunks
+        for (let i = 0; i < part.length; i += 10) {
+          result.push(part.slice(i, i + 10));
+        }
+      } else {
+        result.push(part);
+      }
+    });
+    return result.join(",");
+  };
+
+  // Only exactly-10-digit numbers are considered valid
+  const getValidNumbers = (raw) =>
+    [...new Set(raw.split(",").map((n) => n.trim()).filter((n) => /^\d{10}$/.test(n)))];
+
+  const handleNumbersChange = (e) => {
+    setNumbers(formatNumbers(e.target.value));
+  };
+
+  // When the user leaves the textarea, silently drop anything that isn't a
+  // complete, valid 10-digit number (partial/invalid entries get removed).
+  const handleNumbersBlur = () => {
+    setNumbers(getValidNumbers(numbers).join(","));
+  };
+
+  // ==============================
+  // LOAD ON MOUNT
+  // ==============================
+  useEffect(() => {
+    loadMediaFiles();
+    loadCallerIds();
+  }, []);
+
+  const loadMediaFiles = async () => {
+    try {
+      const res = await fetch(`${BASE}/get-media-files/?user_id=${userId()}&only_approved=true`);
+      const data = await res.json();
+      setMediaFiles(Array.isArray(data) ? data : []);
+    } catch (err) { console.log("Media load error:", err); }
+  };
+
+  const loadCallerIds = async () => {
+    try {
+      const res = await fetch(`${BASE}/get-caller-ids/?user_id=${userId()}`);
+      const data = await res.json();
+      setCallerIds(Array.isArray(data) ? data : []);
+      // Auto-select first caller ID if none selected
+      if (Array.isArray(data) && data.length > 0) {
+        setCallerId(data[0].number);
+      }
+    } catch (err) { console.log("Caller ID load error:", err); }
+  };
+
+  // ==============================
+  // CSV → NUMBERS
+  // ==============================
+  const handleFileUpload = () => {
+    if (!uploadFile) { alert("Please select a file ❌"); return; }
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      const text = e.target.result;
+      const lines = text.split("\n").map(l => l.trim()).filter(Boolean);
+      // only accept exactly 10-digit numbers, invalid ones are dropped automatically
+      const nums = lines.map(line => line.split(",")[0].trim()).filter(n => /^\d{10}$/.test(n));
+      if (nums.length > 0) {
+        const merged = [...new Set(
+          (numbers ? numbers.split(",").concat(nums) : nums)
+            .map(n => n.trim())
+            .filter(n => /^\d{10}$/.test(n))
+        )];
+        setNumbers(merged.join(","));
+        alert(`✅ ${nums.length} valid numbers loaded`);
+        setShowUploadPopup(false);
+      } else {
+        alert("No valid 10-digit numbers found ❌");
+      }
+    };
+    reader.readAsText(uploadFile);
+  };
+
+  // ==============================
+  // TEST CALL
+  // ==============================
+  const handleTestCall = async () => {
+    if (!/^\d{10}$/.test(testNumber)) { alert("Enter a valid 10 digit number ❌"); return; }
+    if (!selectedMediaId) { alert("Select Voice File ❌"); return; }
+    if (!callerId) { alert("Select Caller ID ❌"); return; }
+    try {
+      const res = await fetch(`${BASE}/send-bulk-voice/`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          user_id: userId(), numbers: [testNumber],
+          media_file_id: selectedMediaId, caller_id: callerId,
+          plan_id: voicePlan, call_type: callType,
+          campaign_name: "Test Call",
+          retry_attempt: retryAttempt, retry_duration: retryDuration,
+        }),
+      });
+      const data = await res.json();
+      alert(data.status === "done" ? "✅ Test Call Sent!" : `❌ Failed: ${data.message || ""}`);
+    } catch { alert("Error ❌"); }
+    setShowTestPopup(false);
+  };
+
+  // ==============================
+  // SEND CAMPAIGN
+  // ==============================
+  const sendCampaign = async () => {
+    if (loading) return;
+    setLoading(true);
+    setShowConfirm(false);
+
+    const numberList = getValidNumbers(numbers);
+    if (numberList.length === 0) { alert("Please Enter Valid 10 Digit Numbers ❌"); setLoading(false); return; }
+    if (!selectedMediaId) { alert("Please Select Voice File ❌"); setLoading(false); return; }
+    if (!callerId) { alert("Please Select Caller ID ❌"); setLoading(false); return; }
+
+    try {
+      const res = await fetch(`${BASE}/send-bulk-voice/`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          user_id: userId(), numbers: numberList,
+          media_file_id: selectedMediaId, caller_id: callerId,
+          plan_id: voicePlan, call_type: callType,
+          campaign_name: campaignName,
+          retry_attempt: retryAttempt, retry_duration: retryDuration,
+        }),
+      });
+      const data = await res.json();
+      if (data.status === "done") {
+        alert(`🚀 Campaign Sent!\n\nTotal: ${data.total}\nSuccess: ${data.success}\nFailed: ${data.failed}\nInvalid: ${data.invalid}`);
+        setNumbers(""); setSelectedMediaId("");
+      } else {
+        alert(`❌ Error: ${data.message || "Something went wrong"}`);
+      }
+    } catch { alert("Network Error ❌"); }
+    setLoading(false);
+  };
+
+  // ==============================
+  // SCHEDULE CAMPAIGN
+  // ==============================
+  const handleSchedule = async () => {
+    if (!scheduleDate || !scheduleTime) { alert("Please select date and time ❌"); return; }
+    const numberList = getValidNumbers(numbers);
+    if (numberList.length === 0) { alert("Please Enter Valid 10 Digit Numbers ❌"); return; }
+    if (!selectedMediaId) { alert("Please Select Voice File ❌"); return; }
+    if (!callerId) { alert("Please Select Caller ID ❌"); return; }
+
+    try {
+      setScheduleLoading(true);
+      const res = await fetch(`${BASE}/schedule-campaign/`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          user_id: userId(), numbers: numberList,
+          media_file_id: selectedMediaId, caller_id: callerId,
+          plan_id: voicePlan, call_type: callType,
+          campaign_name: campaignName,
+          scheduled_at: `${scheduleDate}T${scheduleTime}`,
+          retry_attempt: retryAttempt, retry_duration: retryDuration,
+        }),
+      });
+      const data = await res.json();
+      if (data.status === "scheduled") {
+        alert(`✅ Campaign Scheduled!\n\nTotal: ${data.total}\nAt: ${scheduleDate} ${scheduleTime}`);
+        setNumbers(""); setSelectedMediaId(""); setShowSchedulePopup(false);
+      } else {
+        alert(`❌ Error: ${data.message || "Something went wrong"}`);
+      }
+    } catch { alert("Network Error ❌"); }
+    setScheduleLoading(false);
+  };
+
+  // ==============================
+  // RENDER
+  // ==============================
+  return (
+    <div className="min-h-screen bg-[#f5f5f5] p-2">
+
+      <div className="bg-white rounded-[22px] border border-[#ef7d9f] overflow-hidden shadow-md">
+
+        {/* HEADER */}
+        <div className="px-7 py-5 border-b border-gray-200 bg-[#fafafa]">
+          <h1 className="text-[26px] font-bold text-gray-700 tracking-wide">Compose Voice Call</h1>
+        </div>
+
+        <div className="p-7">
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-7">
+
+            {/* CALL TYPE */}
+            <div>
+              <label className="text-[14px] text-gray-500 mb-2 block font-medium">Call Type</label>
+              <select value={callType} onChange={(e) => setCallType(e.target.value)}
+                className="w-full h-[54px] border border-gray-300 rounded-xl px-4 outline-none focus:border-pink-400 shadow-sm">
+                <option value="2">Transactional</option>
+                <option value="1">Promotional</option>
+              </select>
+            </div>
+
+            {/* VOICE PLAN */}
+            <div>
+              <label className="text-[14px] text-gray-500 mb-2 block font-medium">Voice Plan</label>
+              <select value={voicePlan} onChange={(e) => setVoicePlan(e.target.value)}
+                className="w-full h-[54px] border border-gray-300 rounded-xl px-4 outline-none focus:border-pink-400 shadow-sm">
+                <option value="1">Delivery Base 15</option>
+                <option value="2">Delivery Base 30</option>
+                <option value="3">Delivery Base 45</option>
+              </select>
+            </div>
+
+            {/* CALLER ID DROPDOWN */}
+            <div>
+              <label className="text-[14px] text-gray-500 mb-2 block font-medium">
+                Caller ID
+                <span
+                  onClick={loadCallerIds}
+                  className="ml-3 text-pink-500 cursor-pointer text-[12px] underline"
+                >🔄 Refresh</span>
+              </label>
+
+              {callerIds.length === 0 ? (
+                <div className="bg-yellow-50 border border-yellow-300 text-yellow-700 rounded-xl px-4 py-3 text-[13px]">
+                  No Caller IDs found. Please add from <strong>Audio File</strong> section.
+                </div>
+              ) : (
+                <select
+                  value={callerId}
+                  onChange={(e) => setCallerId(e.target.value)}
+                  className="w-full h-[54px] border border-gray-300 rounded-xl px-4 outline-none focus:border-pink-400 shadow-sm"
+                >
+                  <option value="">Select Caller ID</option>
+                  {callerIds.map((c) => (
+                    <option key={c.id} value={c.number}>
+                      {c.name}- {c.number}
+                    </option>
+                  ))}
+                </select>
+              )}
+
+              {callerId && (
+                <div className="mt-2 bg-[#e95d96] h-[34px] rounded-lg flex items-center px-4 text-white font-semibold text-[13px] shadow">
+                  📞 {callerId}
+                </div>
+              )}
+
+              {/* ACTION BUTTONS */}
+              <div className="flex flex-wrap gap-3 mt-5">
+                <button onClick={() => setShowUploadPopup(true)}
+                  className="bg-[#e95d96] hover:scale-105 duration-300 text-white px-5 h-[44px] rounded-xl flex items-center gap-2 text-[13px] shadow-lg">
+                  <FaUsers /> File
+                </button>
+                <button onClick={() => setShowGroupPopup(true)}
+                  className="bg-[#34c7f3] hover:scale-105 duration-300 text-white px-5 h-[44px] rounded-xl flex items-center gap-2 text-[13px] shadow-lg">
+                  <FaLayerGroup /> Group
+                </button>
+                <button onClick={() => setShowTestPopup(true)}
+                  className="bg-[#39d65d] hover:scale-105 duration-300 text-white px-5 h-[44px] rounded-xl flex items-center gap-2 text-[13px] shadow-lg">
+                  📞 Testing Call
+                </button>
+              </div>
+            </div>
+
+            {/* CAMPAIGN NAME */}
+            <div>
+              <label className="text-[14px] text-gray-500 mb-2 block font-medium">Campaign Name</label>
+              <input value={campaignName} onChange={(e) => setCampaignName(e.target.value)}
+                className="w-full h-[54px] border border-gray-300 rounded-xl px-4 outline-none focus:border-pink-400 shadow-sm" />
+            </div>
+
+          </div>
+
+          {/* NUMBERS */}
+          <div className="mt-8">
+            <div className="flex items-center gap-2 mb-3">
+              <h2 className="text-[17px] text-gray-700 font-semibold">Numbers</h2>
+              <span className="text-gray-400 text-[13px]">
+                ({getValidNumbers(numbers).length} valid)
+              </span>
+            </div>
+            <textarea
+              value={numbers}
+              onChange={handleNumbersChange}
+              onBlur={handleNumbersBlur}
+              placeholder="Enter Your Number "
+              className="w-full h-[240px] border border-gray-300 rounded-2xl p-5 outline-none resize-none focus:border-pink-400 text-[14px] shadow-sm"
+            />
+          </div>
+
+          {/* VOICE FILE */}
+          <div className="mt-8">
+            <label className="text-[14px] text-gray-500 mb-2 block font-medium">
+              Select Voice File
+              <span onClick={loadMediaFiles} className="ml-3 text-pink-500 cursor-pointer text-[12px] underline">
+                🔄 Refresh
+              </span>
+            </label>
+            {mediaFiles.length === 0 ? (
+              <div className="bg-yellow-50 border border-yellow-300 text-yellow-700 rounded-xl px-4 py-3 text-[13px]">
+                No voice files found. Please upload from <strong>Audio File</strong> section first.
+              </div>
+            ) : (
+              <select value={selectedMediaId} onChange={(e) => setSelectedMediaId(e.target.value)}
+                className="w-full h-[54px] border border-gray-300 rounded-xl px-4 outline-none focus:border-pink-400 shadow-sm">
+                <option value="">Select Voice File</option>
+                {mediaFiles.map((f) => (
+                  <option key={f.id} value={f.voice_file_id}>{f.name}</option>
+                ))}
+              </select>
+            )}
+          </div>
+
+          {/* RETRIES */}
+          <div className="mt-6">
+            <label className="text-[14px] text-gray-500 mb-2 block font-medium">Retries</label>
+            <select value={retryAttempt} onChange={(e) => setRetryAttempt(e.target.value)}
+              className="w-full h-[54px] border border-gray-300 rounded-xl px-4 outline-none focus:border-pink-400 shadow-sm">
+              <option value="0">0</option>
+              <option value="1">1</option>
+              <option value="2">2</option>
+            </select>
+          </div>
+
+          {/* RETRY DURATION */}
+          <div className="mt-4">
+            <label className="text-[14px] text-gray-500 mb-2 block font-medium">Retry Duration</label>
+            <select value={retryDuration} onChange={(e) => setRetryDuration(e.target.value)}
+              className="w-full h-[54px] border border-gray-300 rounded-xl px-4 outline-none focus:border-pink-400 shadow-sm">
+              <option value="0">Immediate</option>
+              <option value="15">15 Min</option>
+              <option value="30">30 Min</option>
+              <option value="60">1 Hour</option>
+            </select>
+          </div>
+
+          {/* ACTION BUTTONS */}
+          <div className="flex flex-wrap gap-5 mt-10 items-center">
+            <button onClick={() => setShowConfirm(true)} disabled={loading}
+              className="bg-[#e95d96] hover:scale-105 duration-300 text-white px-9 h-[50px] rounded-xl flex items-center gap-3 shadow-lg font-semibold disabled:opacity-50">
+              <FaPaperPlane />
+              {loading ? "Sending..." : "Send Now"}
+            </button>
+            <span className="text-gray-500 text-[15px] font-medium">or</span>
+            <button onClick={() => setShowSchedulePopup(true)}
+              className="bg-[#3d2d83] hover:scale-105 duration-300 text-white px-9 h-[50px] rounded-xl flex items-center gap-3 shadow-lg font-semibold">
+              <FaCalendarAlt /> Schedule Now
+            </button>
+          </div>
+
+        </div>
+      </div>
+
+      {/* FILE UPLOAD POPUP */}
+      {showUploadPopup && (
+        <div className="fixed inset-0 bg-black/40 backdrop-blur-sm z-50 flex items-center justify-center">
+          <div className="bg-white w-[520px] rounded-[18px] overflow-hidden shadow-2xl">
+            <div className="bg-[#e95d96] text-white px-6 py-4 flex justify-between items-center">
+              <h2 className="text-[20px] font-semibold">Upload Numbers File</h2>
+              <button onClick={() => setShowUploadPopup(false)} className="text-[24px]">×</button>
+            </div>
+            <div className="p-6">
+              <div className="border border-gray-300 rounded-xl p-4">
+                <input type="file" accept=".csv,.xls,.xlsx,.txt"
+                  onChange={(e) => setUploadFile(e.target.files[0])} className="mb-4" />
+                <p className="text-[13px] text-gray-500">Upload CSV / TXT file. Numbers in first column. Only valid 10 digit numbers will be kept.</p>
+              </div>
+              <div className="flex justify-end gap-3 mt-7">
+                <button onClick={() => setShowUploadPopup(false)}
+                  className="bg-[#ff5c5c] text-white px-6 h-[42px] rounded-lg font-medium">Close</button>
+                <button onClick={handleFileUpload}
+                  className="bg-[#35c2f2] text-white px-6 h-[42px] rounded-lg font-medium">Upload</button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* GROUP POPUP */}
+      {showGroupPopup && (
+        <div className="fixed inset-0 bg-black/40 backdrop-blur-sm z-50 flex items-center justify-center">
+          <div className="bg-white w-[650px] rounded-[18px] overflow-hidden shadow-2xl">
+            <div className="bg-[#35c2f2] text-white px-6 py-4 flex justify-between items-center">
+              <h2 className="text-[20px] font-semibold">Upload Group</h2>
+              <button onClick={() => setShowGroupPopup(false)} className="text-[24px]">×</button>
+            </div>
+            <div className="p-6">
+              <div className="flex gap-6 mb-6">
+                <div>
+                  <p className="text-[14px] text-gray-600 mb-2">From Range :</p>
+                  <input type="number" value={fromRange} onChange={(e) => setFromRange(e.target.value)}
+                    className="w-[180px] h-[45px] border border-gray-300 rounded-lg px-3 outline-none" />
+                </div>
+                <div>
+                  <p className="text-[14px] text-gray-600 mb-2">To Range :</p>
+                  <input type="number" value={toRange} onChange={(e) => setToRange(e.target.value)}
+                    className="w-[180px] h-[45px] border border-gray-300 rounded-lg px-3 outline-none" />
+                </div>
+              </div>
+              <div className="border border-gray-300 rounded-xl overflow-hidden">
+                <table className="w-full">
+                  <thead className="bg-[#f5f5f5]">
+                    <tr>
+                      <th className="text-left p-4 border-b">Group Name</th>
+                      <th className="text-left p-4 border-b">Total Contacts</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {groups.map((g, i) => (
+                      <tr key={i} className="border-b hover:bg-gray-50 cursor-pointer">
+                        <td className="p-4">{g.name}</td>
+                        <td className="p-4">{g.total}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+              <div className="flex justify-end gap-3 mt-7">
+                <button onClick={() => setShowGroupPopup(false)}
+                  className="bg-[#ff5c5c] text-white px-6 h-[42px] rounded-lg font-medium">Close</button>
+                <button onClick={() => setShowGroupPopup(false)}
+                  className="bg-[#35c2f2] text-white px-6 h-[42px] rounded-lg font-medium">Select Group</button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* TEST CALL POPUP */}
+      {showTestPopup && (
+        <div className="fixed inset-0 bg-black/40 backdrop-blur-sm z-50 flex items-center justify-center">
+          <div className="bg-white w-[420px] rounded-[18px] overflow-hidden shadow-2xl">
+            <div className="bg-[#39d65d] text-white px-6 py-4 flex justify-between items-center">
+              <h2 className="text-[20px] font-semibold">Testing Call</h2>
+              <button onClick={() => setShowTestPopup(false)} className="text-[24px]">×</button>
+            </div>
+            <div className="p-6">
+              <p className="text-[15px] text-gray-600 mb-3">Enter Mobile No. for test (10 digits)</p>
+              <input
+                type="text"
+                inputMode="numeric"
+                maxLength={10}
+                value={testNumber}
+                onChange={(e) => setTestNumber(e.target.value.replace(/\D/g, "").slice(0, 10))}
+                className="w-full h-[48px] border border-gray-300 rounded-xl px-4 outline-none focus:border-green-400"
+              />
+              <div className="flex justify-end gap-3 mt-7">
+                <button onClick={() => setShowTestPopup(false)}
+                  className="bg-[#ff5c5c] text-white px-6 h-[42px] rounded-lg font-medium">Close</button>
+                <button onClick={handleTestCall}
+                  className="bg-[#39d65d] text-white px-6 h-[42px] rounded-lg font-medium">Test Call</button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* SCHEDULE POPUP */}
+      {showSchedulePopup && (
+        <div className="fixed inset-0 bg-black/40 backdrop-blur-sm z-50 flex items-center justify-center">
+          <div className="bg-white w-[500px] rounded-[22px] overflow-hidden shadow-2xl">
+            <div className="bg-[#3d2d83] text-white px-6 py-4 flex justify-between items-center">
+              <h2 className="text-[22px] font-semibold">Schedule Campaign</h2>
+              <button onClick={() => setShowSchedulePopup(false)} className="text-[24px]">×</button>
+            </div>
+            <div className="p-7">
+              <div className="mb-6">
+                <label className="text-[15px] text-gray-600 mb-2 block font-medium">Select Date</label>
+                <input type="date" value={scheduleDate} onChange={(e) => setScheduleDate(e.target.value)}
+                  className="w-full h-[52px] border border-gray-300 rounded-xl px-4 outline-none focus:border-[#3d2d83]" />
+              </div>
+              <div className="mb-6">
+                <label className="text-[15px] text-gray-600 mb-2 block font-medium">Select Time</label>
+                <input type="time" value={scheduleTime} onChange={(e) => setScheduleTime(e.target.value)}
+                  className="w-full h-[52px] border border-gray-300 rounded-xl px-4 outline-none focus:border-[#3d2d83]" />
+              </div>
+              <div className="bg-[#f5f5f5] rounded-xl p-4 mb-7">
+                <p className="text-[14px] text-gray-700">Scheduled Date :</p>
+                <p className="text-[#3d2d83] font-semibold mt-1">{scheduleDate || "Not Selected"}</p>
+                <p className="text-[14px] text-gray-700 mt-3">Scheduled Time :</p>
+                <p className="text-[#3d2d83] font-semibold mt-1">{scheduleTime || "Not Selected"}</p>
+              </div>
+              <div className="flex justify-end gap-3">
+                <button onClick={() => setShowSchedulePopup(false)}
+                  className="bg-[#ff5c5c] text-white px-6 h-[44px] rounded-xl font-semibold">Close</button>
+                <button onClick={handleSchedule} disabled={scheduleLoading}
+                  className="bg-[#3d2d83] hover:bg-[#2c2063] disabled:opacity-50 text-white px-6 h-[44px] rounded-xl font-semibold">
+                  {scheduleLoading ? "Scheduling..." : "Schedule"}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* CONFIRM POPUP */}
+      {showConfirm && (
+        <div className="fixed inset-0 bg-black/40 backdrop-blur-sm flex items-center justify-center z-50">
+          <div className="bg-white rounded-[24px] p-10 w-[390px] shadow-2xl text-center">
+            <h1 className="text-[30px] font-bold text-gray-700 mb-3">Confirm Send</h1>
+            <p className="text-gray-500 text-[14px] leading-7">Are you sure you want to send this campaign?</p>
+            <div className="mt-4 bg-gray-50 rounded-xl p-4 text-left space-y-1">
+              <p className="text-[13px] text-gray-500">
+                Caller ID: <span className="font-semibold text-[#e95d96]">{callerId || "—"}</span>
+              </p>
+              <p className="text-[13px] text-gray-500">
+                Numbers: <span className="font-semibold text-gray-700">
+                  {getValidNumbers(numbers).length}
+                </span>
+              </p>
+              <p className="text-[13px] text-gray-500">
+                Voice File: <span className="font-semibold text-gray-700">{selectedMediaId || "—"}</span>
+              </p>
+            </div>
+            <div className="flex justify-center gap-4 mt-8">
+              <button onClick={sendCampaign}
+                className="bg-[#35c2f2] text-white px-8 h-[48px] rounded-xl font-semibold hover:scale-105 duration-300 shadow-lg">Yes, Send</button>
+              <button onClick={() => setShowConfirm(false)}
+                className="bg-[#ff5c5c] text-white px-8 h-[48px] rounded-xl font-semibold hover:scale-105 duration-300 shadow-lg">Cancel</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+    </div>
+  );
+}
