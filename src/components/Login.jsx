@@ -2,6 +2,7 @@ import { Formik } from "formik";
 import { useState } from "react";
 import * as Yup from "yup";
 import { useNavigate } from "react-router-dom";
+import { BASE } from "../components/api";
 
 function Login() {
 
@@ -43,7 +44,7 @@ function Login() {
 
             try {
 
-              const res = await fetch("https://latestvoice.vercel.app/api/login/", {
+              const res = await fetch(`${BASE}/login/`, {
                 method: "POST",
                 headers: {
                   "Content-Type": "application/json",

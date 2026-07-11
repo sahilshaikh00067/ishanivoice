@@ -1,8 +1,4 @@
-// ===============================
-// 🔧 CENTRAL API CONFIG
-// ===============================
-
-export const BASE = "https://latestvoice.vercel.app/api";
+export const BASE = "https://latestvoice.onrender.com/api";
 
 export async function apiFetch(path, options = {}) {
   const res = await fetch(`${BASE}${path}`, options);
