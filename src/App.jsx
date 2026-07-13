@@ -30,22 +30,22 @@ function App() {
       {/* 🔓 PUBLIC */}
       <Route path="/login" element={<Login />} />
 
-      {/* 🔒 PROTECTED */}
+      {/* 🔒 PROTECTED (login-check only) */}
       <Route element={<AdminRoute />}>
 
         {/* 🔥 HEADER LAYOUT */}
         <Route element={<Header />}>
 
+          {/* ✅ ALL ROLES: admin, reseller, user */}
           <Route path="/dashboard" element={<Dashboard />} />
-
-          {/* ✅ ALL USERS */}
           <Route path="/voicecampaign" element={<VoiceCampaign />} />
           <Route path="/campaignreports" element={<CampaignReports />} />
+          <Route path="/credithistory" element={<CreditHistory />} />
           <Route path="/audiofile" element={<AudioFile />} />
           <Route path="/changepassword" element={<ChangePassword />} />
           <Route path="/logout" element={<Logout />} />
 
-          {/* 🔥 ADMIN + RESELLER ONLY */}
+          {/* 🔒 ADMIN + RESELLER ONLY (user ke liye block) */}
           <Route
             path="/adduser"
             element={
@@ -60,15 +60,6 @@ function App() {
             element={
               user?.role !== "user"
                 ? <ManageUser />
-                : <Navigate to="/dashboard" />
-            }
-          />
-
-          <Route
-            path="/credithistory"
-            element={
-              user?.role !== "user"
-                ? <CreditHistory />
                 : <Navigate to="/dashboard" />
             }
           />
