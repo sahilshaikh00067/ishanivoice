@@ -55,7 +55,7 @@ export default function AudioFile() {
       });
       const data = await res.json();
       if (data.status === "success") {
-        showPopup("success", "Voice file saved! Admin approval ke baad ye send ke liye available hoga.");
+        showPopup("success", "Voice file saved! It will be available for sending after admin approval.");
         setMediaUrl(""); setFriendlyName("");
         loadMedia();
       } else {
@@ -87,7 +87,7 @@ export default function AudioFile() {
       });
       const data = await res.json();
       if (data.status === "success") {
-        showPopup("success", "Voice file approved! Ab user ke campaign page pe dikhega.");
+        showPopup("success", "Voice file approved! It will now show on the user's campaign page.");
         loadMedia();
       } else {
         showPopup("error", data.message || "Approve failed");
@@ -160,21 +160,21 @@ export default function AudioFile() {
           <div>
             <p className="text-[15px] font-bold text-blue-700 mb-1">OBD Voice File Setup</p>
             <p className="text-[13px] text-blue-600 leading-6">
-              OBD server pe jo audio file upload ki hai uska <strong>exact filename</strong> enter karo.<br />
+              Enter the exact filename of the audio file you uploaded on the OBD server.<br />
               Example: <strong>Today.wav</strong> • <strong>Welcome.mp3</strong> • <strong>Diwali_Offer.wav</strong>
             </p>
           </div>
         </div>
 
-        {/* APPROVAL NOTICE (non-admin ko dikhega) */}
+        {/* APPROVAL NOTICE (shown to non-admins) */}
         {!isAdmin && (
           <div className="bg-purple-50 border border-purple-300 rounded-2xl px-5 py-4 mb-6 flex gap-3">
             <ShieldCheck size={22} className="text-purple-500 mt-1 shrink-0" />
             <div>
               <p className="text-[15px] font-bold text-purple-700 mb-1">Approval Required</p>
               <p className="text-[13px] text-purple-600 leading-6">
-                Upload karne ke baad file <strong>"Pending"</strong> status mein rahegi. Admin approve karega,
-                uske baad hi ye Campaign page pe send karne ke liye dikhegi.
+                After uploading, the file will stay in <strong>"Pending"</strong> status. The admin will approve it,
+                and only then will it show on the Campaign page for sending.
               </p>
             </div>
           </div>
@@ -198,7 +198,7 @@ export default function AudioFile() {
             placeholder="Voice filename e.g. Today.wav"
             className="w-full max-w-[540px] h-[50px] border border-gray-300 rounded-xl px-4 outline-none focus:border-pink-400 text-[14px]"
           />
-          <p className="text-[12px] text-gray-400 mt-1">⚠️ OBD server pe jo exact filename hai wahi enter karo</p>
+          <p className="text-[12px] text-gray-400 mt-1">⚠️ Enter the exact filename as it is on the OBD server</p>
         </div>
 
         <div className="flex items-center gap-3 flex-wrap mb-8">
@@ -283,7 +283,7 @@ export default function AudioFile() {
           <div>
             <p className="text-[15px] font-bold text-green-700 mb-1">Caller ID Setup</p>
             <p className="text-[13px] text-green-600 leading-6">
-              Yahan pe admin caller IDs add karo. Campaign page pe ye dropdown mein show honge.<br />
+              Add caller IDs here as admin. These will show in the dropdown on the Campaign page.<br />
               Example: <strong>+918071943020</strong>
             </p>
           </div>
@@ -359,10 +359,10 @@ export default function AudioFile() {
           </div>
           <div className="p-4 space-y-4">
             {[
-              { color: "bg-[#ff744f]", bg: "bg-[#f8e4df]", rule: "Rule 1", text: "OBD server pe pehle audio file upload karo, phir yahan filename save karo.", accent: "text-pink-500", highlight: "audio file upload" },
-              { color: "bg-[#16b7d7]", bg: "bg-[#a9e3ef]", rule: "Rule 2", text: "Format: WAV ya MP3 — OBD server jo support kare.", accent: "text-[#00a6c8]", highlight: "WAV ya MP3" },
-              { color: "bg-pink-500",  bg: "bg-[#f8edf5]", rule: "Rule 3", text: "Filename exactly same hona chahiye — capital/small letters bhi match karein.", accent: "text-pink-500", highlight: "exactly same" },
-              { color: "bg-green-500", bg: "bg-[#e4f3e4]", rule: "Rule 4", text: "Caller ID mein full number enter karo including country code.", accent: "text-green-600", highlight: "+918071943020" },
+              { color: "bg-[#ff744f]", bg: "bg-[#f8e4df]", rule: "Rule 1", text: "First upload the audio file on the OBD server, then save the filename here.", accent: "text-pink-500", highlight: "audio file upload" },
+              { color: "bg-[#16b7d7]", bg: "bg-[#a9e3ef]", rule: "Rule 2", text: "Format: WAV or MP3 — whatever the OBD server supports.", accent: "text-[#00a6c8]", highlight: "WAV or MP3" },
+              { color: "bg-pink-500",  bg: "bg-[#f8edf5]", rule: "Rule 3", text: "The filename must match exactly — capital/small letters must match too.", accent: "text-pink-500", highlight: "exactly same" },
+              { color: "bg-green-500", bg: "bg-[#e4f3e4]", rule: "Rule 4", text: "Enter the full number for Caller ID, including the country code.", accent: "text-green-600", highlight: "+918071943020" },
             ].map((r) => (
               <div key={r.rule} className="flex gap-4">
                 <div className={`w-3 h-3 rounded-full ${r.color} mt-6 shrink-0`}></div>
