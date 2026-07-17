@@ -24,19 +24,19 @@ import { BASE } from "./api";
 ChartJS.register(ArcElement, Tooltip, Legend);
 
 const statusClass = {
-  done:      "bg-green-100 text-green-700",
-  running:   "bg-yellow-100 text-yellow-700",
-  failed:    "bg-red-100 text-red-700",
+  done: "bg-green-100 text-green-700",
+  running: "bg-yellow-100 text-yellow-700",
+  failed: "bg-red-100 text-red-700",
   scheduled: "bg-indigo-100 text-indigo-700",
-  pending:   "bg-indigo-100 text-indigo-700",
+  pending: "bg-indigo-100 text-indigo-700",
 };
 
 const statusDot = {
-  done:      "bg-green-500",
-  running:   "bg-yellow-500",
-  failed:    "bg-red-500",
+  done: "bg-green-500",
+  running: "bg-yellow-500",
+  failed: "bg-red-500",
   scheduled: "bg-indigo-500",
-  pending:   "bg-indigo-500",
+  pending: "bg-indigo-500",
 };
 
 const FILTERS = ["Today", "Yesterday", "7 Days", "30 Days"];
@@ -45,22 +45,21 @@ export default function Dashboard() {
   const [activeFilter, setActiveFilter] = useState("Today");
   const [allCampaigns, setAllCampaigns] = useState([]);
 
-  const [total,    setTotal]    = useState(0);
+  const [total, setTotal] = useState(0);
   const [answered, setAnswered] = useState(0);
-  const [failed,   setFailed]   = useState(0);
-  const [invalid,  setInvalid]  = useState(0);
-  const [pct,      setPct]      = useState(0);
-  const [pending,  setPending]  = useState(0);
-  const [recent,   setRecent]   = useState([]);
-  const [queueStats, setQueueStats] = useState({ running: 0, scheduled: 0, done: 0, total: 0 });
-
+  const [failed, setFailed] = useState(0);
+  const [invalid, setInvalid] = useState(0);
+  const [pct, setPct] = useState(0);
+  const [pending, setPending] = useState(0);
+  const [recent, setRecent] = useState([]);
+  const [queueStats, setQueueStats] = useState({ running: 0, pending: 0, scheduled: 0, done: 0, total: 0 });
   // ==============================
   // LOAD FROM API
   // ==============================
   const loadDash = async () => {
     try {
       const userId = sessionStorage.getItem("user_id");
-      const res  = await fetch(`${BASE}/get-campaigns/?user_id=${userId}`);
+      const res = await fetch(`${BASE}/get-campaigns/?user_id=${userId}`);
       const data = await res.json();
       setAllCampaigns(Array.isArray(data) ? data : []);
     } catch (e) {
@@ -69,7 +68,11 @@ export default function Dashboard() {
     }
   };
 
-  useEffect(() => { loadDash(); }, []);
+  useEffect(() => {
+    loadDash();
+    const interval = setInterval(loadDash, 30000); // auto-refresh every 30s
+    return () => clearInterval(interval);
+  }, []);
 
   // ==============================
   // FILTER
@@ -103,9 +106,9 @@ export default function Dashboard() {
 
     let t = 0, a = 0, f = 0, inv = 0;
     filtered.forEach((r) => {
-      t   += r.total   || 0;
-      a   += r.success || 0;
-      f   += r.failed  || 0;
+      t += r.total || 0;
+      a += r.success || 0;
+      f += r.failed || 0;
       inv += r.invalid || 0;
     });
 
@@ -119,10 +122,11 @@ export default function Dashboard() {
     setPct(t > 0 ? Math.round((a / t) * 100) : 0);
 
     setQueueStats({
-      running:   filtered.filter((r) => r.status === "running").length,
+      running: filtered.filter((r) => r.status === "running").length,
+      pending: filtered.filter((r) => r.status === "pending").length,
       scheduled: filtered.filter((r) => r.status === "scheduled").length,
-      done:      filtered.filter((r) => r.status === "done").length,
-      total:     filtered.length,
+      done: filtered.filter((r) => r.status === "done").length,
+      total: filtered.length,
     });
 
     setRecent([...filtered].sort((a, b) => b.id - a.id).slice(0, 6));
@@ -322,9 +326,9 @@ export default function Dashboard() {
             <div className="flex flex-wrap gap-2 mt-5">
               {[
                 { label: "Answered", val: answered, color: "#EA7A9A" },
-                { label: "Failed",   val: failed,   color: "#f87171" },
-                { label: "Invalid",  val: invalid,  color: "#fbbf24" },
-                { label: "Pending",  val: pending,  color: "#d1d5db" },
+                { label: "Failed", val: failed, color: "#f87171" },
+                { label: "Invalid", val: invalid, color: "#fbbf24" },
+                { label: "Pending", val: pending, color: "#d1d5db" },
               ].map((l) => (
                 <div
                   key={l.label}
@@ -356,9 +360,10 @@ export default function Dashboard() {
 
             <div className="flex flex-col gap-5">
               {[
-                { label: "Running",   val: queueStats.running,   color: "bg-gradient-to-r from-[#EA7A9A] to-[#f4a6bf]", Icon: FiPlay },
-                { label: "Scheduled", val: queueStats.scheduled, color: "bg-gradient-to-r from-blue-400 to-blue-300",   Icon: FiCalendar },
-                { label: "Completed", val: queueStats.done,      color: "bg-gradient-to-r from-green-400 to-green-300", Icon: FiCheck },
+                { label: "Running", val: queueStats.running, color: "bg-gradient-to-r from-[#EA7A9A] to-[#f4a6bf]", Icon: FiPlay },
+                { label: "Pending", val: queueStats.pending, color: "bg-gradient-to-r from-indigo-400 to-indigo-300", Icon: FiRefreshCw },
+                { label: "Scheduled", val: queueStats.scheduled, color: "bg-gradient-to-r from-blue-400 to-blue-300", Icon: FiCalendar },
+                { label: "Completed", val: queueStats.done, color: "bg-gradient-to-r from-green-400 to-green-300", Icon: FiCheck },
               ].map((q) => (
                 <div key={q.label}>
                   <div className="flex items-center justify-between mb-2">
@@ -466,3 +471,15 @@ export default function Dashboard() {
     </div>
   );
 }
+
+
+
+
+
+
+
+
+
+
+// YE  MAI DEPLOY NAHI KIYA HU MAI BAS CODE KO SAHI KR DIYA HU JAISA CHAHIYE 100 NUMBER PE DILIVERRED BALI SAB QUERY SETT BAS 
+

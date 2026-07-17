@@ -9,7 +9,7 @@ export default function VoiceCampaign() {
     `${new Date().toLocaleDateString()}-${new Date().getHours()}:${new Date().getMinutes()}`
   );
   const [callerId, setCallerId] = useState("");
-  const [callerIds, setCallerIds] = useState([]);   // from backend
+  const [callerIds, setCallerIds] = useState([]);
   const [mediaFiles, setMediaFiles] = useState([]);
   const [selectedMediaId, setSelectedMediaId] = useState("");
 
@@ -44,15 +44,12 @@ export default function VoiceCampaign() {
   // ==============================
   // NUMBER FORMATTING HELPERS
   // ==============================
-  // Keeps only digits/commas and auto-inserts a comma after every 10 digits,
-  // so the user never has to type the comma themselves.
   const formatNumbers = (raw) => {
-    const cleaned = raw.replace(/[^\d,]/g, ""); // strip everything except digits & commas
+    const cleaned = raw.replace(/[^\d,]/g, "");
     const parts = cleaned.split(",");
     const result = [];
     parts.forEach((part) => {
       if (part.length > 10) {
-        // break any run of digits (typed continuously or pasted) into 10-digit chunks
         for (let i = 0; i < part.length; i += 10) {
           result.push(part.slice(i, i + 10));
         }
@@ -63,7 +60,6 @@ export default function VoiceCampaign() {
     return result.join(",");
   };
 
-  // Only exactly-10-digit numbers are considered valid
   const getValidNumbers = (raw) =>
     [...new Set(raw.split(",").map((n) => n.trim()).filter((n) => /^\d{10}$/.test(n)))];
 
@@ -71,8 +67,6 @@ export default function VoiceCampaign() {
     setNumbers(formatNumbers(e.target.value));
   };
 
-  // When the user leaves the textarea, silently drop anything that isn't a
-  // complete, valid 10-digit number (partial/invalid entries get removed).
   const handleNumbersBlur = () => {
     setNumbers(getValidNumbers(numbers).join(","));
   };
@@ -98,7 +92,6 @@ export default function VoiceCampaign() {
       const res = await fetch(`${BASE}/get-caller-ids/?user_id=${userId()}`);
       const data = await res.json();
       setCallerIds(Array.isArray(data) ? data : []);
-      // Auto-select first caller ID if none selected
       if (Array.isArray(data) && data.length > 0) {
         setCallerId(data[0].number);
       }
@@ -114,7 +107,6 @@ export default function VoiceCampaign() {
     reader.onload = (e) => {
       const text = e.target.result;
       const lines = text.split("\n").map(l => l.trim()).filter(Boolean);
-      // only accept exactly 10-digit numbers, invalid ones are dropped automatically
       const nums = lines.map(line => line.split(",")[0].trim()).filter(n => /^\d{10}$/.test(n));
       if (nums.length > 0) {
         const merged = [...new Set(
@@ -158,7 +150,7 @@ export default function VoiceCampaign() {
   };
 
   // ==============================
-  // SEND CAMPAIGN
+  // SEND CAMPAIGN — no limit, all valid numbers go
   // ==============================
   const sendCampaign = async () => {
     if (loading) return;
@@ -194,7 +186,7 @@ export default function VoiceCampaign() {
   };
 
   // ==============================
-  // SCHEDULE CAMPAIGN
+  // SCHEDULE CAMPAIGN — no limit
   // ==============================
   const handleSchedule = async () => {
     if (!scheduleDate || !scheduleTime) { alert("Please select date and time ❌"); return; }
@@ -227,6 +219,8 @@ export default function VoiceCampaign() {
     } catch { alert("Network Error ❌"); }
     setScheduleLoading(false);
   };
+
+  const validCount = getValidNumbers(numbers).length;
 
   // ==============================
   // RENDER
@@ -299,7 +293,6 @@ export default function VoiceCampaign() {
                 </div>
               )}
 
-              {/* ACTION BUTTONS */}
               <div className="flex flex-wrap gap-3 mt-5">
                 <button onClick={() => setShowUploadPopup(true)}
                   className="bg-[#e95d96] hover:scale-105 duration-300 text-white px-5 h-[44px] rounded-xl flex items-center gap-2 text-[13px] shadow-lg">
@@ -329,9 +322,7 @@ export default function VoiceCampaign() {
           <div className="mt-8">
             <div className="flex items-center gap-2 mb-3">
               <h2 className="text-[17px] text-gray-700 font-semibold">Numbers</h2>
-              <span className="text-gray-400 text-[13px]">
-                ({getValidNumbers(numbers).length} valid)
-              </span>
+              <span className="text-gray-400 text-[13px]">({validCount} valid)</span>
             </div>
             <textarea
               value={numbers}
@@ -558,9 +549,7 @@ export default function VoiceCampaign() {
                 Caller ID: <span className="font-semibold text-[#e95d96]">{callerId || "—"}</span>
               </p>
               <p className="text-[13px] text-gray-500">
-                Numbers: <span className="font-semibold text-gray-700">
-                  {getValidNumbers(numbers).length}
-                </span>
+                Numbers: <span className="font-semibold text-gray-700">{validCount}</span>
               </p>
               <p className="text-[13px] text-gray-500">
                 Voice File: <span className="font-semibold text-gray-700">{selectedMediaId || "—"}</span>

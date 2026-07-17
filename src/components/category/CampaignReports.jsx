@@ -22,7 +22,13 @@ const CampaignReoprts = () => {
 
   const filters = ["Today", "Yesterday", "Last 7 Days", "Last 30 Days", "This Month", "Last Month"];
 
-  useEffect(() => { loadReports(); }, [selectedFilter]);
+useEffect(() => {
+  loadReports();
+  const interval = setInterval(loadReports, 30000); // auto-refresh every 30s
+  return () => clearInterval(interval);
+}, [selectedFilter]);
+
+
 
   const loadReports = async () => {
     try {
@@ -100,56 +106,48 @@ const loadDetail = async (campaignId) => {
   setDetailLoading(false);
 };
 
-  const downloadReport = () => {
-    if (!detailData?.responses?.length) {
-      alert("No response data found");
-      return;
-    }
+const downloadReport = () => {
+  if (!detailData) { alert("No data found"); return; }
 
-    const excelData = detailData.responses.map((r) => ({
+  const workbook = XLSX.utils.book_new();
+
+  // Sheet 1: full call status list (every single number, not just DTMF responders)
+  const allResults = detailData.results || [];
+  if (allResults.length > 0) {
+    const statusData = allResults.map((r) => ({
+      Number: r.number,
+      Status: r.status,
+      JobId: r.job_id || "-",
+      Error: r.error || "-",
+    }));
+    const statusSheet = XLSX.utils.json_to_sheet(statusData);
+    XLSX.utils.book_append_sheet(workbook, statusSheet, "Call Status");
+  }
+
+  // Sheet 2: IVR / DTMF responses (only numbers who pressed a key)
+  if (detailData.responses && detailData.responses.length > 0) {
+    const ivrData = detailData.responses.map((r) => ({
       Number: r.mobile,
       PressKey: r.dtmf,
       CallResponse:
-        r.dtmf === "1"
-          ? "Interested"
-          : r.dtmf === "2"
-            ? "Call Back"
-            : r.dtmf === "3"
-              ? "Not Interested"
-              : `Pressed ${r.dtmf}`,
-      Status: "Answered",
+        r.dtmf === "1" ? "Interested" :
+        r.dtmf === "2" ? "Call Back" :
+        r.dtmf === "3" ? "Not Interested" :
+        `Pressed ${r.dtmf}`,
     }));
+    const ivrSheet = XLSX.utils.json_to_sheet(ivrData);
+    XLSX.utils.book_append_sheet(workbook, ivrSheet, "IVR Responses");
+  }
 
-    const worksheet = XLSX.utils.json_to_sheet(excelData);
-    const workbook = XLSX.utils.book_new();
+  if (workbook.SheetNames.length === 0) {
+    alert("No data found to export");
+    return;
+  }
 
-    XLSX.utils.book_append_sheet(
-      workbook,
-      worksheet,
-      "Campaign Report"
-    );
-
-    const excelBuffer = XLSX.write(
-      workbook,
-      {
-        bookType: "xlsx",
-        type: "array",
-      }
-    );
-
-    const file = new Blob(
-      [excelBuffer],
-      {
-        type:
-          "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-      }
-    );
-
-    saveAs(
-      file,
-      `${detailData.name}_report.xlsx`
-    );
-  };
+  const excelBuffer = XLSX.write(workbook, { bookType: "xlsx", type: "array" });
+  const file = new Blob([excelBuffer], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" });
+  saveAs(file, `${detailData.name}_report.xlsx`);
+};
 
   const filteredEntries = entries.filter((item) =>
     item.name.toLowerCase().includes(search.toLowerCase())
@@ -228,8 +226,7 @@ const loadDetail = async (campaignId) => {
             <table className="w-full min-w-[900px]">
               <thead>
                 <tr className="bg-[#fafafa]">
-                  {["Date", "Name", "Caller ID", "Total", "Answered", "Failed", "Invalid", "Job ID", "View"].map((head, i) => (
-                    <th key={i} className="border-r border-b border-[#e6e6e6] px-3 py-4 text-left">
+{["Date", "Name", "Caller ID", "Total", "Answered", "Failed", "Invalid", "Status", "Job ID", "View"].map((head, i) => (                    <th key={i} className="border-r border-b border-[#e6e6e6] px-3 py-4 text-left">
                       <div className="flex items-center gap-1 text-[13px] md:text-[15px] font-[700] text-black whitespace-nowrap">
                         {head}
                         <ChevronsUpDown size={14} className="text-[#d3d3d3]" />
@@ -262,7 +259,7 @@ const loadDetail = async (campaignId) => {
                         <Eye size={15} />
                       </button>
                     </td>
-                  </tr>
+                  </tr> 
                 ))}
               </tbody>
             </table>

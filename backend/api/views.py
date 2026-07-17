@@ -1,7 +1,9 @@
+import random
 import requests
 import urllib3
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
+from threading import Timer
 from django.utils.dateparse import parse_datetime
 
 from rest_framework.decorators import api_view
@@ -22,6 +24,10 @@ from .models import (
 OBD_API_URL    = "https://154.210.187.101/OBDAPI/webresources/CreateOBDCampaignPost"
 OBD_UKEY       = "rEfOPQTLgdO7uoa2Cl0WVZaeC"
 OBD_SERVICE_NO = "8071943020"
+
+# Campaign auto-completes (pending -> done) somewhere between 5-10 minutes
+AUTO_COMPLETE_MIN_SECONDS = 300   # 5 min
+AUTO_COMPLETE_MAX_SECONDS = 600   # 10 min
 
 
 # =====================================
@@ -66,16 +72,33 @@ def clean_number(number):
 
 
 # =====================================
-# OBD DTMF CALLBACK  (REPLACE THE OLD ONE WITH THIS)
+# AUTO-COMPLETE CAMPAIGN (pending -> done)
+# Runs on a background timer inside the same worker process.
+# Simulates "calls finished processing" after 5-10 minutes.
+# =====================================
+def complete_campaign_later(campaign_id, delay_seconds):
+    def _mark_done():
+        try:
+            c = VoiceCampaign.objects.get(id=campaign_id)
+            if c.status == "pending":
+                c.status = "done"
+                c.save()
+                print(f"CAMPAIGN {campaign_id} AUTO-MARKED DONE after {delay_seconds}s")
+        except Exception as e:
+            print("AUTO COMPLETE ERROR:", e)
+
+    Timer(delay_seconds, _mark_done).start()
+    print(f"CAMPAIGN {campaign_id} WILL AUTO-COMPLETE IN {delay_seconds}s")
+
+
+# =====================================
+# OBD DTMF CALLBACK
 # =====================================
 @api_view(["POST"])
 def obd_dtmf_callback(request):
 
     print("=== OBD DTMF CALLBACK RAW DATA ===", request.data)
 
-    # Provider may send the campaign reference under different keys
-    # depending on template/version: job_id, leadid, refno, campaignid.
-    # We try all known variants instead of assuming only "job_id".
     job_id = (
         request.data.get("job_id")
         or request.data.get("jobid")
@@ -86,7 +109,6 @@ def obd_dtmf_callback(request):
         or request.data.get("campaign_id")
     )
 
-    # Mobile number may also come under different keys
     mobile = (
         request.data.get("mobile")
         or request.data.get("msisdn")
@@ -94,7 +116,6 @@ def obd_dtmf_callback(request):
         or request.data.get("phone")
     )
 
-    # DTMF key may also vary
     dtmf = (
         request.data.get("dtmf")
         or request.data.get("dtmf_input")
@@ -110,8 +131,6 @@ def obd_dtmf_callback(request):
     if job_id:
         campaign = VoiceCampaign.objects.filter(job_id=str(job_id)).first()
 
-    # Fallback: if job_id didn't match anything, try matching by mobile
-    # against the most recent running/done campaign that contains this number.
     if not campaign:
         campaign = (
             VoiceCampaign.objects
@@ -121,7 +140,7 @@ def obd_dtmf_callback(request):
         )
 
     VoiceCampaignResponse.objects.create(
-        campaign=campaign,   # can be None if truly unmatched; saved anyway so no data is lost
+        campaign=campaign,
         mobile=mobile,
         dtmf=str(dtmf),
     )
@@ -153,8 +172,7 @@ def make_bulk_obd_call(numbers, voice_file, retry_attempt="0", retry_duration="0
         response = requests.post(OBD_API_URL, json=payload, verify=False, timeout=30)
         result   = response.json()
         print(f"=== OBD BULK CALL === numbers={len(numbers)} response={result}")
- 
-        # Explicit failure check
+
         if str(result.get("status", "")).lower() == "failure" or \
            str(result.get("Status", "")).lower() == "failure":
             print("OBD API returned failure:", result)
@@ -168,7 +186,6 @@ def make_bulk_obd_call(numbers, voice_file, retry_attempt="0", retry_duration="0
             result.get("requestid")
         )
 
-# Success check — OBD returns status: success
         obd_success = str(result.get("status", "")).lower() == "success"
         return str(job_id) if (response.status_code == 200 and obd_success and job_id) else None
 
@@ -388,7 +405,7 @@ def delete_caller_id(request):
 
 
 # =====================================
-# UPLOAD MEDIA  (status=Pending + WhatsApp notify)
+# UPLOAD MEDIA
 # =====================================
 @api_view(['POST'])
 def upload_media(request):
@@ -409,7 +426,6 @@ def upload_media(request):
             status="Pending",
         )
 
-        # Notify admin on WhatsApp — never blocks the response if it fails
         notify_msg = (
             f"🔔 New Voice File Uploaded\n\n"
             f"Name: {name}\n"
@@ -465,8 +481,6 @@ def update_media_id(request):
 
 # =====================================
 # GET MEDIA FILES
-# only_approved=true  -> sirf Approved files (VoiceCampaign send page ke liye)
-# default             -> apni saari files (Pending + Approved) — AudioFile management page ke liye
 # =====================================
 @api_view(['GET'])
 def get_media_files(request):
@@ -510,6 +524,9 @@ def delete_media(request):
 
 # =====================================
 # SEND BULK VOICE
+# — NO cap on numbers: every valid number is sent
+# — credit deducted = exact count of numbers sent
+# — status goes "pending" first, auto-flips to "done" after 5-10 min
 # =====================================
 @api_view(['POST'])
 def send_bulk_voice(request):
@@ -544,6 +561,7 @@ def send_bulk_voice(request):
         if not valid_numbers:
             return Response({"status": "failed", "message": "No Valid Numbers"})
 
+        # Credit check — full count of numbers being sent (no cap)
         if user.role != "admin" and user.credit < len(valid_numbers):
             return Response({"status": "failed", "message": "Insufficient Credit"})
 
@@ -560,10 +578,12 @@ def send_bulk_voice(request):
             results       = [{"number": n, "status": "sent", "job_id": job_id} for n in valid_numbers]
             success_count = len(valid_numbers)
             failed_count  = 0
+            campaign_status = "pending"   # calls placed, will auto-complete in 5-10 min
         else:
             results       = [{"number": n, "status": "failed", "error": "OBD API error"} for n in valid_numbers]
             success_count = 0
             failed_count  = len(valid_numbers)
+            campaign_status = "done"      # nothing was actually sent, no need to wait
 
         results += invalid_results
         invalid_count = len(invalid_results)
@@ -573,9 +593,15 @@ def send_bulk_voice(request):
         campaign.nonwa   = invalid_count
         campaign.job_id  = str(job_id) if job_id else ""
         campaign.results = results
-        campaign.status  = "done"
+        campaign.status  = campaign_status
         campaign.save()
 
+        # schedule auto-complete (5-10 min) only if calls were actually placed
+        if campaign_status == "pending":
+            delay = random.randint(AUTO_COMPLETE_MIN_SECONDS, AUTO_COMPLETE_MAX_SECONDS)
+            complete_campaign_later(campaign.id, delay)
+
+        # credit deducted = exact number of numbers actually sent to OBD
         if success_count > 0 and user.role != "admin":
             user.credit -= success_count
             if user.credit < 0:
@@ -602,7 +628,7 @@ def send_bulk_voice(request):
 
 
 # =====================================
-# SCHEDULE CAMPAIGN
+# SCHEDULE CAMPAIGN — no cap
 # =====================================
 @api_view(['POST'])
 def schedule_campaign(request):
@@ -754,7 +780,7 @@ def get_campaign_detail(request):
         )
 
 # =====================================
-# CHANGE PASSWORD (self-service, verifies current password)
+# CHANGE PASSWORD
 # =====================================
 @api_view(['POST'])
 def change_password(request):
@@ -783,7 +809,7 @@ def change_password(request):
 
 
 # =====================================
-# LIST USERS (role-scoped: admin=all, reseller=self+children, user=self)
+# LIST USERS
 # =====================================
 @api_view(['GET'])
 def list_users(request):
