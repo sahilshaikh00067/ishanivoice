@@ -63,7 +63,7 @@ const AddUser = () => {
 
           <div className="flex items-center gap-4">
 
-            <div className="w-[62px] h-[62px] rounded-2xl bg-[#fff0f4] border border-[#ef7fa4] flex items-center justify-center">
+            <div className="w-[62px] h-[61px] rounded-2xl bg-[#fff0f4] border border-[#ef7fa4] flex items-center justify-center">
 
               <UserPlus
                 size={28}
@@ -79,7 +79,7 @@ const AddUser = () => {
               </h1>
 
               <p className="text-[14px] text-gray-500 mt-1">
-                Create reseller or user account
+                Create Reseller or User Account
               </p>
 
             </div>
