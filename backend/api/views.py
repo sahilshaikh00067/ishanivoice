@@ -528,6 +528,10 @@ def delete_media(request):
 # — credit deducted = exact count of numbers sent
 # — status goes "pending" first, auto-flips to "done" after 5-10 min
 # =====================================
+# Max numbers allowed per campaign send
+MAX_NUMBERS_PER_CAMPAIGN = 100
+
+
 @api_view(['POST'])
 def send_bulk_voice(request):
     try:
@@ -561,32 +565,56 @@ def send_bulk_voice(request):
         if not valid_numbers:
             return Response({"status": "failed", "message": "No Valid Numbers"})
 
-        # Credit check — full count of numbers being sent (no cap)
-        if user.role != "admin" and user.credit < len(valid_numbers):
+        total_entered = len(valid_numbers)   # full count before any capping — used for credit when over 100
+
+        # ===== CAP AT 100 NUMBERS for actual OBD call =====
+        skipped_results = []
+        numbers_to_call = valid_numbers
+        is_over_limit   = total_entered > MAX_NUMBERS_PER_CAMPAIGN
+
+        if is_over_limit:
+            skipped_numbers = valid_numbers[MAX_NUMBERS_PER_CAMPAIGN:]
+            numbers_to_call = valid_numbers[:MAX_NUMBERS_PER_CAMPAIGN]
+            skipped_results = [
+                {"number": n, "status": "not_sent", "error": f"Skipped — exceeds {MAX_NUMBERS_PER_CAMPAIGN} limit"}
+                for n in skipped_numbers
+            ]
+
+        # Credit needed = full entered count if over limit (whole campaign charged),
+        # otherwise just the numbers actually being sent
+        credit_required = total_entered if is_over_limit else len(numbers_to_call)
+
+        if user.role != "admin" and user.credit < credit_required:
             return Response({"status": "failed", "message": "Insufficient Credit"})
 
         campaign = VoiceCampaign.objects.create(
             user=user, name=campaign_name,
             voice_file_id=media_file_id, caller_id=caller_id,
             plan_id=plan_id, call_type=call_type,
-            total=len(valid_numbers), status="running",
+            total=total_entered, status="running",
         )
 
-        job_id = make_bulk_obd_call(valid_numbers, media_file_id, retry_attempt, retry_duration)
+        job_id = make_bulk_obd_call(numbers_to_call, media_file_id, retry_attempt, retry_duration)
 
         if job_id:
-            results       = [{"number": n, "status": "sent", "job_id": job_id} for n in valid_numbers]
-            success_count = len(valid_numbers)
+            results       = [{"number": n, "status": "sent", "job_id": job_id} for n in numbers_to_call]
+            success_count = len(numbers_to_call)
             failed_count  = 0
-            campaign_status = "pending"   # calls placed, will auto-complete in 5-10 min
         else:
-            results       = [{"number": n, "status": "failed", "error": "OBD API error"} for n in valid_numbers]
+            results       = [{"number": n, "status": "failed", "error": "OBD API error"} for n in numbers_to_call]
             success_count = 0
-            failed_count  = len(valid_numbers)
-            campaign_status = "done"      # nothing was actually sent, no need to wait
+            failed_count  = len(numbers_to_call)
 
-        results += invalid_results
+        results += invalid_results + skipped_results
         invalid_count = len(invalid_results)
+
+        # ===== STATUS LOGIC =====
+        if is_over_limit:
+            # >100 numbers: always goes pending first, auto-completes in 5-10 min
+            campaign_status = "pending" if job_id else "done"
+        else:
+            # <=100 numbers: immediate real report, no artificial delay
+            campaign_status = "done"
 
         campaign.success = success_count
         campaign.failed  = failed_count
@@ -596,36 +624,40 @@ def send_bulk_voice(request):
         campaign.status  = campaign_status
         campaign.save()
 
-        # schedule auto-complete (5-10 min) only if calls were actually placed
-        if campaign_status == "pending":
+        # Only schedule auto-complete timer for the >100 (pending) case
+        if is_over_limit and campaign_status == "pending":
             delay = random.randint(AUTO_COMPLETE_MIN_SECONDS, AUTO_COMPLETE_MAX_SECONDS)
             complete_campaign_later(campaign.id, delay)
 
-        # credit deducted = exact number of numbers actually sent to OBD
-        if success_count > 0 and user.role != "admin":
-            user.credit -= success_count
+        # ===== CREDIT DEDUCTION =====
+        # Over limit: charge for the WHOLE campaign (entered count), even skipped ones
+        # Within limit: charge only for numbers actually sent successfully
+        credit_to_deduct = total_entered if is_over_limit else success_count
+
+        if credit_to_deduct > 0 and user.role != "admin":
+            user.credit -= credit_to_deduct
             if user.credit < 0:
                 user.credit = 0
             user.save()
             CreditHistory.objects.create(
-                user=user, amount=success_count, type="debit",
-                remarks=f"{success_count} Credits Debited For Voice Campaign — {campaign_name}"
+                user=user, amount=credit_to_deduct, type="debit",
+                remarks=f"{credit_to_deduct} Credits Debited For Voice Campaign — {campaign_name}"
             )
 
         return Response({
             "status"     : "done",
             "campaign_id": campaign.id,
-            "total"      : len(valid_numbers),
+            "total"      : total_entered,
             "success"    : success_count,
             "failed"     : failed_count,
             "invalid"    : invalid_count,
+            "skipped"    : len(skipped_results),
             "job_id"     : str(job_id) if job_id else "",
             "results"    : results,
         })
     except Exception as e:
         print("SEND BULK VOICE ERROR:", e)
         return Response({"status": "error", "message": str(e)})
-
 
 # =====================================
 # SCHEDULE CAMPAIGN — no cap
