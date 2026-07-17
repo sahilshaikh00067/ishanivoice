@@ -34,23 +34,54 @@ const AddUser = () => {
     sessionStorage.getItem("user")
   );
 
-  // ✅ SUBMIT
-  const res = await fetch(
-    `${BASE}/create-user/`,   // 👈 hardcoded vercel URL hata kar ye kar do
-    {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        username: form.username,
-        password: form.password,
-        role: form.role.toLowerCase(),
-        parent: currentUser?.username || null,
-      }),
-    }
-  );
+// ✅ SUBMIT
+  const handleSubmit = async (e) => {
+    e.preventDefault();
 
+    try {
+      const res = await fetch(`${BASE}/create-user/`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          username: form.username,
+          password: form.password,
+          role: form.role.toLowerCase(),
+          parent: currentUser?.username || null,
+        }),
+      });
+
+      if (!res.ok) {
+        alert("Server Error ❌");
+        return;
+      }
+
+      const data = await res.json();
+
+      if (data.status !== "success") {
+        alert(data.message || "Error ❌");
+        return;
+      }
+
+      alert("User Added Successfully ✅");
+
+      // ✅ RESET
+      setForm({
+        username: "",
+        password: "",
+        email: "",
+        mobile: "",
+        company: "",
+        city: "",
+        role: "User",
+      });
+    } catch (err) {
+      console.log(err);
+      alert("Network Error ❌");
+    }
+  };
+  
   return (
 
     <div className="min-h-screen bg-[#f8f8f8] p-4 md:p-7">
