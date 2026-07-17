@@ -1,4 +1,5 @@
 import React, { useState } from "react";
+import { BASE } from "../components/api";   // 👈 ye line add karo
 import {
   User,
   Lock,
@@ -34,111 +35,21 @@ const AddUser = () => {
   );
 
   // ✅ SUBMIT
-  const handleSubmit = async (e) => {
-
-    e.preventDefault();
-
-    try {
-
-      const res = await fetch(
-        "https://latestvoice.vercel.app/api/create-user/",
-        {
-          method: "POST",
-
-          headers: {
-            "Content-Type": "application/json",
-          },
-
-          body: JSON.stringify({
-            username: form.username,
-            password: form.password,
-            role: form.role.toLowerCase(),
-            parent:
-              currentUser?.username || null,
-          }),
-        }
-      );
-
-      if (!res.ok) {
-
-        alert("Server Error ❌");
-
-        return;
-
-      }
-
-      const data = await res.json();
-
-      if (data.status !== "success") {
-
-        alert(
-          data.message || "Error ❌"
-        );
-
-        return;
-
-      }
-
-      // ✅ SAVE
-      const newUser = {
-
-        id: data.user_id,
-
+  const res = await fetch(
+    `${BASE}/create-user/`,   // 👈 hardcoded vercel URL hata kar ye kar do
+    {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
         username: form.username,
-
         password: form.password,
-
         role: form.role.toLowerCase(),
-
-        parent:
-          currentUser?.username,
-
-        status: "Active",
-
-        // ✅ IMPORTANT
-        credit: 0,
-
-      };
-
-      const oldUsers =
-        JSON.parse(
-          localStorage.getItem("users")
-        ) || [];
-
-      localStorage.setItem(
-        "users",
-        JSON.stringify([
-          newUser,
-          ...oldUsers,
-        ])
-      );
-
-      alert(
-        "User Added Successfully ✅"
-      );
-
-      // ✅ RESET
-      setForm({
-        username: "",
-        password: "",
-        email: "",
-        mobile: "",
-        company: "",
-        city: "",
-        role: "User",
-      });
-
-    } catch (err) {
-
-      console.log(err);
-
-      alert(
-        "Network Error ❌"
-      );
-
+        parent: currentUser?.username || null,
+      }),
     }
-
-  };
+  );
 
   return (
 
