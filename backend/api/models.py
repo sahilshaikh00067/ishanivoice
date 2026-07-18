@@ -112,10 +112,11 @@ class VoiceCampaign(models.Model):
 
     def __str__(self):
         return f"Campaign #{self.id} - {self.name}"
-    
 
-#Voice Response
 
+# ===============================
+# ☎️ VOICE CAMPAIGN RESPONSE (DTMF)
+# ===============================
 class VoiceCampaignResponse(models.Model):
     campaign = models.ForeignKey(
         VoiceCampaign,
@@ -129,6 +130,55 @@ class VoiceCampaignResponse(models.Model):
 
     def __str__(self):
         return f"{self.mobile} -> {self.dtmf}"
+
+
+# ===============================
+# 📊 VOICE CALL DISPOSITION
+# Real per-call disposition data imported from the OBD
+# "LastDispositionReport" Excel export (downloaded manually
+# from the OBD panel). This is the SOURCE OF TRUTH report —
+# Call Status, Disposition (Answered / Ring / UnallocatedNumber),
+# Dial/Answer/End time, Duration, Pulse etc.
+# ===============================
+class VoiceCallDisposition(models.Model):
+    campaign = models.ForeignKey(
+        VoiceCampaign, on_delete=models.CASCADE,
+        related_name="dispositions", null=True, blank=True
+        # campaign can be null if we couldn't match it to any
+        # internal campaign — row is still saved, no data lost
+    )
+
+    username          = models.CharField(max_length=100, blank=True)
+    call_date         = models.CharField(max_length=20,  blank=True)   # "2026-06-02"
+    mobile            = models.CharField(max_length=20)
+    service_no        = models.CharField(max_length=20,  blank=True)
+    obd_campaign_name = models.CharField(max_length=255, blank=True)   # raw "Campaign Name" from OBD sheet
+
+    dial_time     = models.CharField(max_length=40, blank=True)
+    answered_time = models.CharField(max_length=40, blank=True)
+    end_time      = models.CharField(max_length=40, blank=True)
+    duration_secs = models.IntegerField(default=0)
+
+    call_status = models.CharField(max_length=20,  blank=True)   # Success / Failure
+    call_flow   = models.CharField(max_length=50,  blank=True)
+    disposition = models.CharField(max_length=100, blank=True)   # Answered / Ring / UnallocatedNumber ...
+
+    retry  = models.IntegerField(default=0)
+    pulse  = models.IntegerField(default=0)
+    cost   = models.CharField(max_length=20, blank=True)
+
+    dtmf_input    = models.CharField(max_length=10, blank=True)
+    prompt_length = models.CharField(max_length=10, blank=True)
+    tts_count     = models.CharField(max_length=10, blank=True)
+
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        # prevents duplicate rows when the same report is re-uploaded
+        unique_together = ("mobile", "dial_time", "obd_campaign_name")
+
+    def __str__(self):
+        return f"{self.mobile} - {self.disposition} ({self.obd_campaign_name})"
 
 
 # ===============================

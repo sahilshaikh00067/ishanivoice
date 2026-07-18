@@ -1,6 +1,6 @@
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import {
-  CalendarDays, ChevronDown, ChevronLeft, ChevronRight, ChevronsUpDown, Eye,
+  CalendarDays, ChevronDown, ChevronLeft, ChevronRight, ChevronsUpDown, Eye, UploadCloud,
 } from "lucide-react";
 import { BASE } from "../api";
 import * as XLSX from "xlsx";
@@ -20,15 +20,20 @@ const CampaignReoprts = () => {
   const [detailData, setDetailData] = useState(null);
   const [detailLoading, setDetailLoading] = useState(false);
 
+  // Disposition report upload
+  const fileInputRef = useRef(null);
+  const [uploading, setUploading] = useState(false);
+
+  const role = sessionStorage.getItem("role")?.toLowerCase();
+  const canUpload = role === "admin" || role === "reseller";
+
   const filters = ["Today", "Yesterday", "Last 7 Days", "Last 30 Days", "This Month", "Last Month"];
 
-useEffect(() => {
-  loadReports();
-  const interval = setInterval(loadReports, 30000); // auto-refresh every 30s
-  return () => clearInterval(interval);
-}, [selectedFilter]);
-
-
+  useEffect(() => {
+    loadReports();
+    const interval = setInterval(loadReports, 30000); // auto-refresh every 30s
+    return () => clearInterval(interval);
+  }, [selectedFilter]);
 
   const loadReports = async () => {
     try {
@@ -84,70 +89,142 @@ useEffect(() => {
     setLoading(false);
   };
 
-const loadDetail = async (campaignId) => {
-  try {
-    setDetailLoading(true);
+  const loadDetail = async (campaignId) => {
+    try {
+      setDetailLoading(true);
+      const res = await fetch(`${BASE}/get-campaign-detail/?campaign_id=${campaignId}`);
+      const data = await res.json();
+      console.log("DETAIL DATA =>", data);
+      setDetailData(data);
+      setShowDetail(true);
+    } catch (err) {
+      console.log(err);
+      alert("Error loading detail ❌");
+    }
+    setDetailLoading(false);
+  };
 
-    const res = await fetch(
-      `${BASE}/get-campaign-detail/?campaign_id=${campaignId}`
-    );
+  // ==============================
+  // UPLOAD DISPOSITION REPORT (the real OBD Excel export)
+  // ==============================
+  const handleUploadClick = () => {
+    if (fileInputRef.current) fileInputRef.current.click();
+  };
 
-    const data = await res.json();
+  const handleDispositionFile = async (e) => {
+    const file = e.target.files[0];
+    e.target.value = ""; // allow re-selecting same file next time
+    if (!file) return;
 
-    console.log("DETAIL DATA =>", data);
+    try {
+      setUploading(true);
+      const formData = new FormData();
+      formData.append("file", file);
+      formData.append("admin_id", sessionStorage.getItem("user_id"));
 
-    setDetailData(data);
-    setShowDetail(true);
-  } catch (err) {
-    console.log(err);
-    alert("Error loading detail ❌");
-  }
+      const res = await fetch(`${BASE}/upload-disposition-report/`, {
+        method: "POST",
+        body: formData,
+      });
+      const data = await res.json();
 
-  setDetailLoading(false);
-};
+      if (data.status === "success") {
+        alert(
+          `✅ Disposition Report Imported!\n\n` +
+          `Total Rows: ${data.total_rows}\n` +
+          `Matched to Campaign: ${data.matched}\n` +
+          `Unmatched: ${data.unmatched}\n` +
+          `New: ${data.new}  |  Updated: ${data.updated}`
+        );
+        loadReports();
+      } else {
+        alert(`❌ Import Failed: ${data.message || "Something went wrong"}`);
+      }
+    } catch (err) {
+      console.log(err);
+      alert("Network Error while uploading ❌");
+    }
+    setUploading(false);
+  };
 
-const downloadReport = () => {
-  if (!detailData) { alert("No data found"); return; }
+  // ==============================
+  // DOWNLOAD REPORT — mirrors the real OBD disposition report
+  // when disposition data is available, falls back to basic
+  // call status list otherwise
+  // ==============================
+  const downloadReport = () => {
+    if (!detailData) { alert("No data found"); return; }
 
-  const workbook = XLSX.utils.book_new();
+    const workbook = XLSX.utils.book_new();
+    const dispositions = detailData.dispositions || [];
 
-  // Sheet 1: full call status list (every single number, not just DTMF responders)
-  const allResults = detailData.results || [];
-  if (allResults.length > 0) {
-    const statusData = allResults.map((r) => ({
-      Number: r.number,
-      Status: r.status,
-      JobId: r.job_id || "-",
-      Error: r.error || "-",
-    }));
-    const statusSheet = XLSX.utils.json_to_sheet(statusData);
-    XLSX.utils.book_append_sheet(workbook, statusSheet, "Call Status");
-  }
+    if (dispositions.length > 0) {
+      // Real disposition sheet — same shape as the OBD export
+      const dispSheet = dispositions.map((d) => ({
+        PhoneNo: d.mobile,
+        Date: d.call_date,
+        "Call Dial Time": d.dial_time,
+        "Call Answered Time": d.answered_time,
+        "Call End Time": d.end_time,
+        "Call Duration(In Secs)": d.duration,
+        "Call Status": d.call_status,
+        "Call Flow": d.call_flow,
+        Disposition: d.disposition,
+        Retry: d.retry,
+        Pulse: d.pulse,
+        Cost: d.cost,
+        "DTMF Input": d.dtmf_input,
+      }));
+      XLSX.utils.book_append_sheet(
+        workbook,
+        XLSX.utils.json_to_sheet(dispSheet),
+        "Disposition Detail"
+      );
+    }
 
-  // Sheet 2: IVR / DTMF responses (only numbers who pressed a key)
-  if (detailData.responses && detailData.responses.length > 0) {
-    const ivrData = detailData.responses.map((r) => ({
-      Number: r.mobile,
-      PressKey: r.dtmf,
-      CallResponse:
-        r.dtmf === "1" ? "Interested" :
-        r.dtmf === "2" ? "Call Back" :
-        r.dtmf === "3" ? "Not Interested" :
-        `Pressed ${r.dtmf}`,
-    }));
-    const ivrSheet = XLSX.utils.json_to_sheet(ivrData);
-    XLSX.utils.book_append_sheet(workbook, ivrSheet, "IVR Responses");
-  }
+    // Sheet: basic call status list (every number sent, from our own system)
+    const allResults = detailData.results || [];
+    if (allResults.length > 0) {
+      const statusData = allResults.map((r) => ({
+        Number: r.number,
+        Status: r.status,
+        JobId: r.job_id || "-",
+        Error: r.error || "-",
+      }));
+      XLSX.utils.book_append_sheet(
+        workbook,
+        XLSX.utils.json_to_sheet(statusData),
+        "Call Status"
+      );
+    }
 
-  if (workbook.SheetNames.length === 0) {
-    alert("No data found to export");
-    return;
-  }
+    // Sheet: IVR / DTMF responses (only numbers who pressed a key)
+    if (detailData.responses && detailData.responses.length > 0) {
+      const ivrData = detailData.responses.map((r) => ({
+        Number: r.mobile,
+        PressKey: r.dtmf,
+        CallResponse:
+          r.dtmf === "1" ? "Interested" :
+          r.dtmf === "2" ? "Call Back" :
+          r.dtmf === "3" ? "Not Interested" :
+          `Pressed ${r.dtmf}`,
+      }));
+      XLSX.utils.book_append_sheet(
+        workbook,
+        XLSX.utils.json_to_sheet(ivrData),
+        "IVR Responses"
+      );
+    }
 
-  const excelBuffer = XLSX.write(workbook, { bookType: "xlsx", type: "array" });
-  const file = new Blob([excelBuffer], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" });
-  saveAs(file, `${detailData.name}_report.xlsx`);
-};
+    if (workbook.SheetNames.length === 0) {
+      alert("No data found to export");
+      return;
+    }
+
+    const excelBuffer = XLSX.write(workbook, { bookType: "xlsx", type: "array" });
+    const file = new Blob([excelBuffer], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" });
+    saveAs(file, `${detailData.name}_report.xlsx`);
+  };
 
   const filteredEntries = entries.filter((item) =>
     item.name.toLowerCase().includes(search.toLowerCase())
@@ -156,13 +233,40 @@ const downloadReport = () => {
   const totalPages = Math.ceil(filteredEntries.length / showEntries);
   const paginated = filteredEntries.slice((page - 1) * showEntries, page * showEntries);
 
+  const dispositionBadge = (disp) => {
+    const d = (disp || "").toLowerCase();
+    if (d.includes("answer")) return "bg-green-100 text-green-700";
+    if (d.includes("ring")) return "bg-yellow-100 text-yellow-700";
+    return "bg-red-100 text-red-600";
+  };
+
   return (
     <div className="min-h-screen bg-[#efefef] p-3 md:p-5 overflow-x-hidden">
       <div className="w-full bg-[#f3f3f3] rounded-[20px] border border-[#ef7fa4] overflow-hidden shadow-sm">
 
         {/* HEADER */}
-        <div className="bg-[#ececec] border-b border-[#e5e5e5] px-4 md:px-7 py-5">
+        <div className="bg-[#ececec] border-b border-[#e5e5e5] px-4 md:px-7 py-5 flex items-center justify-between flex-wrap gap-3">
           <h1 className="text-[18px] md:text-[24px] font-[700] text-black uppercase">Campaign Report</h1>
+
+          {canUpload && (
+            <>
+              <input
+                type="file"
+                ref={fileInputRef}
+                accept=".xlsx,.xls"
+                onChange={handleDispositionFile}
+                className="hidden"
+              />
+              <button
+                onClick={handleUploadClick}
+                disabled={uploading}
+                className="h-[42px] px-5 rounded-full bg-[#3d2d83] hover:bg-[#2c2063] disabled:opacity-50 text-white flex items-center gap-2 text-[13px] md:text-[14px] font-[600]"
+              >
+                <UploadCloud size={16} />
+                {uploading ? "Importing..." : "Upload Disposition Report"}
+              </button>
+            </>
+          )}
         </div>
 
         <div className="px-3 md:px-6 py-6">
@@ -226,7 +330,8 @@ const downloadReport = () => {
             <table className="w-full min-w-[900px]">
               <thead>
                 <tr className="bg-[#fafafa]">
-{["Date", "Name", "Caller ID", "Total", "Answered", "Failed", "Invalid", "Status", "Job ID", "View"].map((head, i) => (                    <th key={i} className="border-r border-b border-[#e6e6e6] px-3 py-4 text-left">
+                  {["Date", "Name", "Caller ID", "Total", "Answered", "Failed", "Invalid", "Status", "Job ID", "View"].map((head, i) => (
+                    <th key={i} className="border-r border-b border-[#e6e6e6] px-3 py-4 text-left">
                       <div className="flex items-center gap-1 text-[13px] md:text-[15px] font-[700] text-black whitespace-nowrap">
                         {head}
                         <ChevronsUpDown size={14} className="text-[#d3d3d3]" />
@@ -249,6 +354,7 @@ const downloadReport = () => {
                     <td className="px-3 py-4 border-b border-[#ececec] text-[13px] text-green-600 font-semibold">{item.process}</td>
                     <td className="px-3 py-4 border-b border-[#ececec] text-[13px] text-red-500 font-semibold">{item.pending}</td>
                     <td className="px-3 py-4 border-b border-[#ececec] text-[13px] text-orange-500 font-semibold">{item.invalid}</td>
+                    <td className="px-3 py-4 border-b border-[#ececec] text-[13px]">{item.status}</td>
                     <td className="px-3 py-4 border-b border-[#ececec] text-[13px]">{item.jobId || "-"}</td>
                     <td className="px-3 py-4 border-b border-[#ececec]">
                       <button
@@ -259,7 +365,7 @@ const downloadReport = () => {
                         <Eye size={15} />
                       </button>
                     </td>
-                  </tr> 
+                  </tr>
                 ))}
               </tbody>
             </table>
@@ -294,8 +400,8 @@ const downloadReport = () => {
       {/* DETAIL MODAL */}
       {showDetail && detailData && (
         <div className="fixed inset-0 bg-black/40 z-50 flex items-center justify-center p-4">
-          <div className="bg-white rounded-[20px] w-full max-w-[700px] max-h-[80vh] overflow-y-auto shadow-2xl">
-            <div className="flex justify-between items-center px-6 py-4 border-b bg-[#fafafa]">
+          <div className="bg-white rounded-[20px] w-full max-w-[1000px] max-h-[85vh] overflow-y-auto shadow-2xl">
+            <div className="flex justify-between items-center px-6 py-4 border-b bg-[#fafafa] sticky top-0 z-10">
               <h2 className="text-[20px] font-bold">
                 Campaign Detail — {detailData.name}
               </h2>
@@ -317,7 +423,7 @@ const downloadReport = () => {
               </div>
             </div>
             <div className="p-6">
-              <div className="grid grid-cols-2 gap-4 mb-5">
+              <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-5">
                 {[
                   ["Total", detailData.total],
                   ["Answered", detailData.success],
@@ -335,6 +441,62 @@ const downloadReport = () => {
                 ))}
               </div>
 
+              {/* REAL DISPOSITION DETAIL — from uploaded OBD report */}
+              {detailData.dispositions && detailData.dispositions.length > 0 ? (
+                <div className="mt-6">
+                  <h3 className="text-lg font-bold mb-3">
+                    Call Disposition Detail
+                    <span className="text-[12px] font-normal text-gray-400 ml-2">
+                      (imported from OBD report)
+                    </span>
+                  </h3>
+
+                  <div className="overflow-x-auto rounded-xl border border-gray-200">
+                    <table className="w-full min-w-[900px]">
+                      <thead className="bg-gray-50">
+                        <tr>
+                          {["Number", "Date", "Dial Time", "Answer Time", "End Time", "Duration", "Call Status", "Disposition", "Retry", "Pulse", "DTMF"].map((h) => (
+                            <th key={h} className="px-3 py-3 text-left border-b text-[12px] font-semibold text-gray-600 whitespace-nowrap">
+                              {h}
+                            </th>
+                          ))}
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {detailData.dispositions.map((d, i) => (
+                          <tr key={i} className="border-b hover:bg-gray-50">
+                            <td className="px-3 py-2 text-[13px]">{d.mobile}</td>
+                            <td className="px-3 py-2 text-[12px] text-gray-500 whitespace-nowrap">{d.call_date}</td>
+                            <td className="px-3 py-2 text-[12px] text-gray-500 whitespace-nowrap">{d.dial_time}</td>
+                            <td className="px-3 py-2 text-[12px] text-gray-500 whitespace-nowrap">{d.answered_time || "-"}</td>
+                            <td className="px-3 py-2 text-[12px] text-gray-500 whitespace-nowrap">{d.end_time}</td>
+                            <td className="px-3 py-2 text-[13px] font-semibold">{d.duration}s</td>
+                            <td className="px-3 py-2 text-[13px]">
+                              <span className={`px-2 py-1 rounded-full text-[11px] font-semibold ${d.call_status === "Success" ? "bg-green-100 text-green-700" : "bg-red-100 text-red-600"}`}>
+                                {d.call_status}
+                              </span>
+                            </td>
+                            <td className="px-3 py-2 text-[13px]">
+                              <span className={`px-2 py-1 rounded-full text-[11px] font-semibold ${dispositionBadge(d.disposition)}`}>
+                                {d.disposition}
+                              </span>
+                            </td>
+                            <td className="px-3 py-2 text-[13px]">{d.retry}</td>
+                            <td className="px-3 py-2 text-[13px]">{d.pulse}</td>
+                            <td className="px-3 py-2 text-[13px] font-bold">{d.dtmf_input || "-"}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              ) : (
+                <div className="mt-6 bg-yellow-50 border border-yellow-300 text-yellow-700 rounded-xl px-4 py-3 text-[13px]">
+                  No real disposition data imported for this campaign yet.
+                  {canUpload ? " Upload the OBD disposition report from the top of this page to see full call detail here." : ""}
+                </div>
+              )}
+
               {detailData.responses && detailData.responses.length > 0 && (
                 <div className="mt-6">
                   <h3 className="text-lg font-bold mb-3">
@@ -345,29 +507,16 @@ const downloadReport = () => {
                     <table className="w-full">
                       <thead className="bg-gray-50">
                         <tr>
-                          <th className="px-4 py-3 text-left border-b">
-                            Mobile Number
-                          </th>
-                          <th className="px-4 py-3 text-left border-b">
-                            Pressed Key
-                          </th>
-                          <th className="px-4 py-3 text-left border-b">
-                            Response
-                          </th>
+                          <th className="px-4 py-3 text-left border-b">Mobile Number</th>
+                          <th className="px-4 py-3 text-left border-b">Pressed Key</th>
+                          <th className="px-4 py-3 text-left border-b">Response</th>
                         </tr>
                       </thead>
-
                       <tbody>
                         {detailData.responses.map((r, i) => (
                           <tr key={i} className="border-b">
-                            <td className="px-4 py-2">
-                              {r.mobile}
-                            </td>
-
-                            <td className="px-4 py-2 font-bold">
-                              {r.dtmf}
-                            </td>
-
+                            <td className="px-4 py-2">{r.mobile}</td>
+                            <td className="px-4 py-2 font-bold">{r.dtmf}</td>
                             <td className="px-4 py-2">
                               {r.dtmf === "1"
                                 ? "Interested"

@@ -32,7 +32,10 @@ urlpatterns = [
     path("schedule-campaign/",   views.schedule_campaign),
     path("get-campaigns/",       views.get_campaigns),
     path("get-campaign-detail/", views.get_campaign_detail),
-    path("obd-dtmf-callback/",views.obd_dtmf_callback),
+    path("obd-dtmf-callback/",   views.obd_dtmf_callback),
+
+    # DISPOSITION REPORT IMPORT (OBD Excel upload)
+    path("upload-disposition-report/", views.upload_disposition_report),
 
     # CREDIT
     path("credit-history/", views.credit_history),

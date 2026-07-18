@@ -1,12 +1,16 @@
+import re
 import random
 import requests
 import urllib3
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
+import openpyxl
+
 from threading import Timer
 from django.utils.dateparse import parse_datetime
 
-from rest_framework.decorators import api_view
+from rest_framework.decorators import api_view, parser_classes
+from rest_framework.parsers import MultiPartParser
 from rest_framework.response import Response
 
 from .models import (
@@ -15,6 +19,7 @@ from .models import (
     VoiceMediaFile,
     VoiceCampaign,
     VoiceCampaignResponse,
+    VoiceCallDisposition,
     CreditHistory,
 )
 
@@ -73,8 +78,6 @@ def clean_number(number):
 
 # =====================================
 # AUTO-COMPLETE CAMPAIGN (pending -> done)
-# Runs on a background timer inside the same worker process.
-# Simulates "calls finished processing" after 5-10 minutes.
 # =====================================
 def complete_campaign_later(campaign_id, delay_seconds):
     def _mark_done():
@@ -524,11 +527,7 @@ def delete_media(request):
 
 # =====================================
 # SEND BULK VOICE
-# — NO cap on numbers: every valid number is sent
-# — credit deducted = exact count of numbers sent
-# — status goes "pending" first, auto-flips to "done" after 5-10 min
 # =====================================
-# Max numbers allowed per campaign send
 MAX_NUMBERS_PER_CAMPAIGN = 100
 
 
@@ -565,9 +564,8 @@ def send_bulk_voice(request):
         if not valid_numbers:
             return Response({"status": "failed", "message": "No Valid Numbers"})
 
-        total_entered = len(valid_numbers)   # full count before any capping — used for credit when over 100
+        total_entered = len(valid_numbers)
 
-        # ===== CAP AT 100 NUMBERS for actual OBD call =====
         skipped_results = []
         numbers_to_call = valid_numbers
         is_over_limit   = total_entered > MAX_NUMBERS_PER_CAMPAIGN
@@ -580,8 +578,6 @@ def send_bulk_voice(request):
                 for n in skipped_numbers
             ]
 
-        # Credit needed = full entered count if over limit (whole campaign charged),
-        # otherwise just the numbers actually being sent
         credit_required = total_entered if is_over_limit else len(numbers_to_call)
 
         if user.role != "admin" and user.credit < credit_required:
@@ -608,12 +604,9 @@ def send_bulk_voice(request):
         results += invalid_results + skipped_results
         invalid_count = len(invalid_results)
 
-        # ===== STATUS LOGIC =====
         if is_over_limit:
-            # >100 numbers: always goes pending first, auto-completes in 5-10 min
             campaign_status = "pending" if job_id else "done"
         else:
-            # <=100 numbers: immediate real report, no artificial delay
             campaign_status = "done"
 
         campaign.success = success_count
@@ -624,14 +617,10 @@ def send_bulk_voice(request):
         campaign.status  = campaign_status
         campaign.save()
 
-        # Only schedule auto-complete timer for the >100 (pending) case
         if is_over_limit and campaign_status == "pending":
             delay = random.randint(AUTO_COMPLETE_MIN_SECONDS, AUTO_COMPLETE_MAX_SECONDS)
             complete_campaign_later(campaign.id, delay)
 
-        # ===== CREDIT DEDUCTION =====
-        # Over limit: charge for the WHOLE campaign (entered count), even skipped ones
-        # Within limit: charge only for numbers actually sent successfully
         credit_to_deduct = total_entered if is_over_limit else success_count
 
         if credit_to_deduct > 0 and user.role != "admin":
@@ -659,8 +648,9 @@ def send_bulk_voice(request):
         print("SEND BULK VOICE ERROR:", e)
         return Response({"status": "error", "message": str(e)})
 
+
 # =====================================
-# SCHEDULE CAMPAIGN — no cap
+# SCHEDULE CAMPAIGN
 # =====================================
 @api_view(['POST'])
 def schedule_campaign(request):
@@ -771,6 +761,8 @@ def get_campaigns(request):
 
 # =====================================
 # GET CAMPAIGN DETAIL
+# now also returns "dispositions" — real disposition rows
+# imported from the OBD Excel report, if any exist for this campaign
 # =====================================
 @api_view(['GET'])
 def get_campaign_detail(request):
@@ -788,6 +780,25 @@ def get_campaign_detail(request):
             for r in c.responses.all()
         ]
 
+        dispositions = [
+            {
+                "mobile"        : d.mobile,
+                "call_date"     : d.call_date,
+                "dial_time"     : d.dial_time,
+                "answered_time" : d.answered_time,
+                "end_time"      : d.end_time,
+                "duration"      : d.duration_secs,
+                "call_status"   : d.call_status,
+                "call_flow"     : d.call_flow,
+                "disposition"   : d.disposition,
+                "retry"         : d.retry,
+                "pulse"         : d.pulse,
+                "cost"          : d.cost,
+                "dtmf_input"    : d.dtmf_input,
+            }
+            for d in c.dispositions.all().order_by("id")
+        ]
+
         return Response({
             "id": c.id,
             "name": c.name,
@@ -803,6 +814,7 @@ def get_campaign_detail(request):
             "status": c.status,
             "results": c.results,
             "responses": responses,
+            "dispositions": dispositions,
         })
 
     except VoiceCampaign.DoesNotExist:
@@ -810,6 +822,157 @@ def get_campaign_detail(request):
             {"status": "failed", "message": "Campaign not found"},
             status=404
         )
+
+
+# =====================================
+# UPLOAD DISPOSITION REPORT
+# Accepts the "OBD_LastDispositionReport" .xlsx that you download
+# manually from the OBD panel. Parses it and matches each row to
+# an internal VoiceCampaign:
+#   1) tries to extract the job_id from the OBD "Campaign Name"
+#      column (pattern like "API_1161_Trans_...") and match it
+#      against VoiceCampaign.job_id
+#   2) falls back to matching by phone number + call date against
+#      campaigns whose results contain that number
+# Rows that can't be matched are still saved (campaign=None) so no
+# data is lost — you can see them as "Unmatched" in the response.
+# =====================================
+@api_view(['POST'])
+@parser_classes([MultiPartParser])
+def upload_disposition_report(request):
+    try:
+        admin_id = request.data.get("admin_id")
+        admin    = User.objects.filter(id=admin_id).first()
+
+        if not admin or admin.role not in ("admin", "reseller"):
+            return Response({"status": "failed", "message": "Not authorized"})
+
+        file_obj = request.FILES.get("file")
+        if not file_obj:
+            return Response({"status": "failed", "message": "No file uploaded"})
+
+        wb = openpyxl.load_workbook(file_obj, data_only=True)
+        ws = wb.worksheets[0]
+        rows = list(ws.iter_rows(values_only=True))
+
+        if not rows or len(rows) < 2:
+            return Response({"status": "failed", "message": "Empty file"})
+
+        header = [str(h).strip() if h else "" for h in rows[0]]
+
+        def col(name):
+            return header.index(name) if name in header else None
+
+        idx = {
+            "username"   : col("UserName"),
+            "date"       : col("Date"),
+            "phone"      : col("PhoneNo"),
+            "service"    : col("ServiceNo"),
+            "campaign"   : col("Campaign Name"),
+            "dial"       : col("Call Dial Time"),
+            "answered"   : col("Call Answered Time"),
+            "end"        : col("Call End Time"),
+            "duration"   : col("Call Duration(In Secs)"),
+            "status"     : col("Call Status"),
+            "flow"       : col("Call Flow"),
+            "disposition": col("Disposition"),
+            "retry"      : col("Retry"),
+            "pulse"      : col("Pulse"),
+            "cost"       : col("Cost"),
+            "dtmf"       : col("DTMF Input"),
+            "prompt"     : col("Prompt Length"),
+            "tts"        : col("TTS Count"),
+        }
+
+        def g(row, key):
+            i = idx.get(key)
+            if i is None or i >= len(row):
+                return ""
+            val = row[i]
+            return str(val).strip() if val is not None else ""
+
+        def to_int(raw):
+            try:
+                return int(float(raw)) if raw not in ("", None) else 0
+            except (ValueError, TypeError):
+                return 0
+
+        matched_count, unmatched_count, updated_count, created_count = 0, 0, 0, 0
+
+        for row in rows[1:]:
+            if not row or not any(row):
+                continue
+
+            mobile = g(row, "phone")
+            if not mobile:
+                continue
+
+            obd_camp_name = g(row, "campaign")
+            call_date     = g(row, "date")
+
+            # ---- 1) match via job_id embedded in OBD Campaign Name ----
+            campaign = None
+            job_match = re.search(r'API_(\d+)_', obd_camp_name)
+            if job_match:
+                campaign = VoiceCampaign.objects.filter(job_id=job_match.group(1)).first()
+
+            # ---- 2) fallback: phone number appears in campaign.results + same date ----
+            if not campaign:
+                candidates = VoiceCampaign.objects.filter(results__icontains=mobile).order_by("-id")
+                for cand in candidates:
+                    if call_date and cand.created_at.strftime("%Y-%m-%d") == call_date:
+                        campaign = cand
+                        break
+                if not campaign and candidates.exists():
+                    campaign = candidates.first()
+
+            obj, created = VoiceCallDisposition.objects.update_or_create(
+                mobile=mobile,
+                dial_time=g(row, "dial"),
+                obd_campaign_name=obd_camp_name,
+                defaults=dict(
+                    campaign=campaign,
+                    username=g(row, "username"),
+                    call_date=call_date,
+                    service_no=g(row, "service"),
+                    answered_time=g(row, "answered"),
+                    end_time=g(row, "end"),
+                    duration_secs=to_int(g(row, "duration")),
+                    call_status=g(row, "status"),
+                    call_flow=g(row, "flow"),
+                    disposition=g(row, "disposition"),
+                    retry=to_int(g(row, "retry")),
+                    pulse=to_int(g(row, "pulse")),
+                    cost=g(row, "cost"),
+                    dtmf_input=g(row, "dtmf"),
+                    prompt_length=g(row, "prompt"),
+                    tts_count=g(row, "tts"),
+                )
+            )
+
+            if campaign:
+                matched_count += 1
+            else:
+                unmatched_count += 1
+
+            if created:
+                created_count += 1
+            else:
+                updated_count += 1
+
+        return Response({
+            "status"    : "success",
+            "total_rows": len(rows) - 1,
+            "matched"   : matched_count,
+            "unmatched" : unmatched_count,
+            "new"       : created_count,
+            "updated"   : updated_count,
+        })
+
+    except Exception as e:
+        print("UPLOAD DISPOSITION REPORT ERROR:", e)
+        return Response({"status": "error", "message": str(e)})
+
 
 # =====================================
 # CHANGE PASSWORD
@@ -874,6 +1037,7 @@ def list_users(request):
     except Exception as e:
         print("LIST USERS ERROR:", e)
         return Response([])
+
 
 # =====================================
 # CREDIT HISTORY
