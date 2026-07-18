@@ -25,7 +25,7 @@ const CampaignReoprts = () => {
   const [uploading, setUploading] = useState(false);
 
   const role = sessionStorage.getItem("role")?.toLowerCase();
-  const canUpload = role === "admin" || role === "reseller";
+  const canUpload = role === "admin";
 
   const filters = ["Today", "Yesterday", "Last 7 Days", "Last 30 Days", "This Month", "Last Month"];
 
@@ -492,8 +492,8 @@ const CampaignReoprts = () => {
                 </div>
               ) : (
                 <div className="mt-6 bg-yellow-50 border border-yellow-300 text-yellow-700 rounded-xl px-4 py-3 text-[13px]">
-                  No real disposition data imported for this campaign yet.
-                  {canUpload ? " Upload the OBD disposition report from the top of this page to see full call detail here." : ""}
+                  Your Report Is Pending.
+                  {canUpload ? " Wait For Few Minutes." : ""}
                 </div>
               )}
 
