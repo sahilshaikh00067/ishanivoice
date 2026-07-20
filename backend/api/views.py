@@ -413,19 +413,21 @@ def delete_caller_id(request):
 @api_view(['POST'])
 def upload_media(request):
     try:
-        user       = User.objects.get(id=request.data.get("user_id"))
-        name       = request.data.get("name", "Untitled")
-        voice_file = (
-            request.data.get("voice_file") or
-            request.data.get("media_url")  or ""
+        user           = User.objects.get(id=request.data.get("user_id"))
+        name           = request.data.get("name", "Untitled")
+        voice_file     = (
+            request.data.get("voice_file") or ""
         ).strip()
+        media_file_url = (request.data.get("media_file_url") or "").strip()
 
         if not voice_file:
             return Response({"status": "failed", "message": "Voice filename required"})
+        if not media_file_url:
+            return Response({"status": "failed", "message": "Audio file upload required"})
 
         media_obj = VoiceMediaFile.objects.create(
             user=user, name=name,
-            voice_file_id=voice_file, media_url=voice_file,
+            voice_file_id=voice_file, media_url=media_file_url,
             status="Pending",
         )
 

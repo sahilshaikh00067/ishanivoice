@@ -1,15 +1,18 @@
 import React, { useEffect, useRef, useState } from "react";
-import { AlertCircle, CheckCircle2, Trash2, Info, Phone, ShieldCheck } from "lucide-react";
+import { AlertCircle, CheckCircle2, Trash2, Info, Phone, ShieldCheck, UploadCloud, Download, Music } from "lucide-react";
 import { BASE } from "../api";
 
 export default function AudioFile() {
 
   // ── VOICE FILE STATES ──
   const [friendlyName, setFriendlyName] = useState("");
-  const [mediaUrl,     setMediaUrl]     = useState("");
+  const [mediaUrl,     setMediaUrl]     = useState("");   // OBD server filename e.g. Today.wav
+  const [audioFile,    setAudioFile]    = useState(null); // actual selected audio file
   const [mediaList,    setMediaList]    = useState([]);
   const [loadingList,  setLoadingList]  = useState(false);
   const [approvingId,  setApprovingId]  = useState(null);
+  const [audioUploading, setAudioUploading] = useState(false);
+  const fileInputRef = useRef(null);
 
   // ── CALLER ID STATES ──
   const [callerName,   setCallerName]   = useState("");
@@ -44,24 +47,62 @@ export default function AudioFile() {
     setLoadingList(false);
   };
 
+  const handleFileSelect = (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+    setAudioFile(file);
+  };
+
   const handleUpload = async () => {
     if (!friendlyName.trim()) { showPopup("error", "Please enter a name"); return; }
     if (!mediaUrl.trim())     { showPopup("error", "Please enter voice filename (e.g. Today.wav)"); return; }
+    if (!audioFile)           { showPopup("error", "Please select the audio file to upload"); return; }
+
     try {
+      setAudioUploading(true);
+
+      // 1) Upload the actual audio file so it can be played/downloaded later
+      const catboxForm = new FormData();
+      catboxForm.append("reqtype", "fileupload");
+      catboxForm.append("fileToUpload", audioFile);
+
+      const catboxRes = await fetch("https://catbox.moe/user/api.php", {
+        method: "POST",
+        body: catboxForm,
+      });
+      const uploadedUrl = (await catboxRes.text()).trim();
+
+      if (!uploadedUrl.startsWith("http")) {
+        showPopup("error", "Audio file upload failed, please try again ❌");
+        setAudioUploading(false);
+        return;
+      }
+
+      // 2) Save the record (Pending — waits for admin approval)
       const res  = await fetch(`${BASE}/upload-media/`, {
         method : "POST",
         headers: { "Content-Type": "application/json" },
-        body   : JSON.stringify({ user_id: userId(), name: friendlyName, voice_file: mediaUrl }),
+        body   : JSON.stringify({
+          user_id       : userId(),
+          name          : friendlyName,
+          voice_file    : mediaUrl,
+          media_file_url: uploadedUrl,
+        }),
       });
       const data = await res.json();
       if (data.status === "success") {
-        showPopup("success", "Voice file saved! It will be available for sending after admin approval.");
-        setMediaUrl(""); setFriendlyName("");
+        showPopup("success", "Voice file uploaded! It will be available for sending after admin approval.");
+        setMediaUrl(""); setFriendlyName(""); setAudioFile(null);
+        if (fileInputRef.current) fileInputRef.current.value = "";
         loadMedia();
       } else {
         showPopup("error", data.message || "Failed");
       }
-    } catch { showPopup("error", "Network Error ❌"); }
+    } catch (err) {
+      console.log(err);
+      showPopup("error", "Network Error ❌");
+    }
+    setAudioUploading(false);
   };
 
   const handleDeleteMedia = async (mediaId) => {
@@ -160,8 +201,9 @@ export default function AudioFile() {
           <div>
             <p className="text-[15px] font-bold text-blue-700 mb-1">OBD Voice File Setup</p>
             <p className="text-[13px] text-blue-600 leading-6">
-              Enter the exact filename of the audio file you uploaded on the OBD server.<br />
-              Example: <strong>Today.wav</strong> • <strong>Welcome.mp3</strong> • <strong>Diwali_Offer.wav</strong>
+              Enter the exact filename as it's uploaded on the OBD server (for calling), and also
+              upload the actual audio file here (for record, playback & download).<br />
+              Example filename: <strong>Today.wav</strong> • <strong>Welcome.mp3</strong> • <strong>Diwali_Offer.wav</strong>
             </p>
           </div>
         </div>
@@ -190,23 +232,44 @@ export default function AudioFile() {
           />
         </div>
 
-        {/* FILENAME INPUT */}
+        {/* FILENAME INPUT (must match OBD server filename) */}
         <div className="mb-4">
           <input
             type="text" value={mediaUrl}
             onChange={(e) => setMediaUrl(e.target.value)}
-            placeholder="Voice filename e.g. Today.wav"
+            placeholder="Voice filename on OBD server e.g. Today.wav"
             className="w-full max-w-[540px] h-[50px] border border-gray-300 rounded-xl px-4 outline-none focus:border-pink-400 text-[14px]"
           />
-          <p className="text-[12px] text-gray-400 mt-1">⚠️ Enter the exact filename as it is on the OBD server</p>
+          <p className="text-[12px] text-gray-400 mt-1">⚠️ Must match exactly the filename already uploaded on the OBD server</p>
+        </div>
+
+        {/* ACTUAL FILE UPLOAD */}
+        <div className="mb-6">
+          <label className="text-[13px] font-semibold text-gray-500 mb-2 block">Upload Audio File</label>
+          <div className="flex items-center gap-3 flex-wrap">
+            <input
+              type="file"
+              ref={fileInputRef}
+              accept="audio/*"
+              onChange={handleFileSelect}
+              className="max-w-[400px] text-[13px] file:mr-3 file:py-2 file:px-4 file:rounded-full file:border-0 file:bg-pink-100 file:text-pink-600 file:font-semibold file:cursor-pointer"
+            />
+            {audioFile && (
+              <span className="text-[12px] text-gray-500 flex items-center gap-1">
+                <Music size={14} /> {audioFile.name}
+              </span>
+            )}
+          </div>
         </div>
 
         <div className="flex items-center gap-3 flex-wrap mb-8">
           <button
             onClick={handleUpload}
-            className="bg-gradient-to-r from-pink-400 to-pink-500 text-white px-6 py-3 rounded-full text-[16px] font-semibold hover:scale-105 duration-300 shadow-md"
+            disabled={audioUploading}
+            className="bg-gradient-to-r from-pink-400 to-pink-500 disabled:opacity-50 text-white px-6 py-3 rounded-full text-[16px] font-semibold hover:scale-105 duration-300 shadow-md flex items-center gap-2"
           >
-            Save Voice File
+            <UploadCloud size={18} />
+            {audioUploading ? "Uploading..." : "Save Voice File"}
           </button>
         </div>
 
@@ -217,26 +280,46 @@ export default function AudioFile() {
             <button onClick={loadMedia} className="text-pink-500 text-[13px] underline">🔄 Refresh</button>
           </div>
           <div className="overflow-x-auto">
-            <table className="w-full min-w-[600px]">
+            <table className="w-full min-w-[750px]">
               <thead className="bg-gray-50">
                 <tr>
                   <th className="px-5 py-3 text-left text-[13px] font-semibold text-gray-500 border-b">#</th>
                   <th className="px-5 py-3 text-left text-[13px] font-semibold text-gray-500 border-b">Name</th>
                   <th className="px-5 py-3 text-left text-[13px] font-semibold text-gray-500 border-b">Voice File</th>
+                  <th className="px-5 py-3 text-left text-[13px] font-semibold text-gray-500 border-b">Audio</th>
                   <th className="px-5 py-3 text-left text-[13px] font-semibold text-gray-500 border-b">Status</th>
                   <th className="px-5 py-3 text-left text-[13px] font-semibold text-gray-500 border-b">Action</th>
                 </tr>
               </thead>
               <tbody>
                 {loadingList ? (
-                  <tr><td colSpan="5" className="text-center py-6 text-gray-400">Loading...</td></tr>
+                  <tr><td colSpan="6" className="text-center py-6 text-gray-400">Loading...</td></tr>
                 ) : mediaList.length === 0 ? (
-                  <tr><td colSpan="5" className="text-center py-6 text-gray-400">No files yet — add one above</td></tr>
+                  <tr><td colSpan="6" className="text-center py-6 text-gray-400">No files yet — add one above</td></tr>
                 ) : mediaList.map((f, i) => (
                   <tr key={f.id} className="border-b hover:bg-gray-50">
                     <td className="px-5 py-3 text-[13px] text-gray-400">{i + 1}</td>
                     <td className="px-5 py-3 text-[14px] font-medium text-gray-700">{f.name}</td>
-                    <td className="px-5 py-3 text-[13px] text-gray-500">{f.media_url}</td>
+                    <td className="px-5 py-3 text-[13px] text-gray-500">{f.voice_file_id}</td>
+                    <td className="px-5 py-3">
+                      {f.media_url ? (
+                        <div className="flex items-center gap-2">
+                          <audio controls src={f.media_url} className="h-[32px] max-w-[220px]" />
+                          <a
+                            href={f.media_url}
+                            download
+                            target="_blank"
+                            rel="noreferrer"
+                            className="text-pink-500 hover:text-pink-600"
+                            title="Download"
+                          >
+                            <Download size={16} />
+                          </a>
+                        </div>
+                      ) : (
+                        <span className="text-[12px] text-gray-400">—</span>
+                      )}
+                    </td>
                     <td className="px-5 py-3">
                       <span className={`text-[11px] px-3 py-1 rounded-full font-semibold ${
                         f.status === "Approved"
@@ -359,10 +442,10 @@ export default function AudioFile() {
           </div>
           <div className="p-4 space-y-4">
             {[
-              { color: "bg-[#ff744f]", bg: "bg-[#f8e4df]", rule: "Rule 1", text: "First upload the audio file on the OBD server, then save the filename here.", accent: "text-pink-500", highlight: "audio file upload" },
-              { color: "bg-[#16b7d7]", bg: "bg-[#a9e3ef]", rule: "Rule 2", text: "Format: WAV or MP3 — whatever the OBD server supports.", accent: "text-[#00a6c8]", highlight: "WAV or MP3" },
-              { color: "bg-pink-500",  bg: "bg-[#f8edf5]", rule: "Rule 3", text: "The filename must match exactly — capital/small letters must match too.", accent: "text-pink-500", highlight: "exactly same" },
-              { color: "bg-green-500", bg: "bg-[#e4f3e4]", rule: "Rule 4", text: "Enter the full number for Caller ID, including the country code.", accent: "text-green-600", highlight: "+918071943020" },
+              { color: "bg-[#ff744f]", bg: "bg-[#f8e4df]", rule: "Rule 1", text: "First upload the audio file on the OBD server, then enter that exact filename here." },
+              { color: "bg-[#16b7d7]", bg: "bg-[#a9e3ef]", rule: "Rule 2", text: "Also upload the same audio file here so it can be played and downloaded from this page." },
+              { color: "bg-pink-500",  bg: "bg-[#f8edf5]", rule: "Rule 3", text: "The filename must match exactly — capital/small letters must match too." },
+              { color: "bg-green-500", bg: "bg-[#e4f3e4]", rule: "Rule 4", text: "Enter the full number for Caller ID, including the country code." },
             ].map((r) => (
               <div key={r.rule} className="flex gap-4">
                 <div className={`w-3 h-3 rounded-full ${r.color} mt-6 shrink-0`}></div>
