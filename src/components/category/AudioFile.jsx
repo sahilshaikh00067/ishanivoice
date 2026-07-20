@@ -180,7 +180,7 @@ export default function AudioFile() {
         <h1 className="text-[28px] font-bold text-[#1d2756] mb-4">Upload Voice File</h1>
 
         {/* OBD NOTICE */}
-        <div className="bg-blue-50 border border-blue-300 rounded-2xl px-5 py-4 mb-6 flex gap-3">
+        {/* <div className="bg-blue-50 border border-blue-300 rounded-2xl px-5 py-4 mb-6 flex gap-3">
           <Info size={22} className="text-blue-500 mt-1 shrink-0" />
           <div>
             <p className="text-[15px] font-bold text-blue-700 mb-1">OBD Voice File Setup</p>
@@ -190,7 +190,7 @@ export default function AudioFile() {
               Example filename: <strong>Today.wav</strong> • <strong>Welcome.mp3</strong> • <strong>Diwali_Offer.wav</strong>
             </p>
           </div>
-        </div>
+        </div> */}
 
         {/* APPROVAL NOTICE (shown to non-admins) */}
         {!isAdmin && (
@@ -221,10 +221,9 @@ export default function AudioFile() {
           <input
             type="text" value={mediaUrl}
             onChange={(e) => setMediaUrl(e.target.value)}
-            placeholder="Voice filename on OBD server e.g. Today.wav"
+            placeholder="Voice filename Only .wav & .mp3 form e.g. abc.wav , xyz.mp3"
             className="w-full max-w-[540px] h-[50px] border border-gray-300 rounded-xl px-4 outline-none focus:border-pink-400 text-[14px]"
           />
-          <p className="text-[12px] text-gray-400 mt-1">⚠️ Must match exactly the filename already uploaded on the OBD server</p>
         </div>
 
         {/* ACTUAL FILE UPLOAD */}
