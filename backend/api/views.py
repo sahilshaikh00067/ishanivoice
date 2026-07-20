@@ -411,19 +411,35 @@ def delete_caller_id(request):
 # UPLOAD MEDIA
 # =====================================
 @api_view(['POST'])
+@parser_classes([MultiPartParser])
 def upload_media(request):
     try:
-        user           = User.objects.get(id=request.data.get("user_id"))
-        name           = request.data.get("name", "Untitled")
-        voice_file     = (
-            request.data.get("voice_file") or ""
-        ).strip()
-        media_file_url = (request.data.get("media_file_url") or "").strip()
+        user       = User.objects.get(id=request.data.get("user_id"))
+        name       = request.data.get("name", "Untitled")
+        voice_file = (request.data.get("voice_file") or "").strip()
+        audio_file = request.FILES.get("audio_file")
 
         if not voice_file:
             return Response({"status": "failed", "message": "Voice filename required"})
-        if not media_file_url:
+        if not audio_file:
             return Response({"status": "failed", "message": "Audio file upload required"})
+
+        # Upload to Catbox from the SERVER side — browsers can't call
+        # catbox.moe directly because it doesn't send CORS headers back.
+        try:
+            catbox_resp = requests.post(
+                "https://catbox.moe/user/api.php",
+                data={"reqtype": "fileupload"},
+                files={"fileToUpload": (audio_file.name, audio_file.read(), audio_file.content_type)},
+                timeout=30,
+            )
+            media_file_url = catbox_resp.text.strip()
+            if not media_file_url.startswith("http"):
+                print("CATBOX UPLOAD FAILED RESPONSE:", media_file_url)
+                return Response({"status": "failed", "message": "Audio hosting failed, please try again"})
+        except Exception as e:
+            print("CATBOX UPLOAD ERROR:", e)
+            return Response({"status": "failed", "message": "Audio upload failed"})
 
         media_obj = VoiceMediaFile.objects.create(
             user=user, name=name,

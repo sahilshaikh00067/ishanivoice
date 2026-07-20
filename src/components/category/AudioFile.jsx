@@ -61,33 +61,17 @@ export default function AudioFile() {
     try {
       setAudioUploading(true);
 
-      // 1) Upload the actual audio file so it can be played/downloaded later
-      const catboxForm = new FormData();
-      catboxForm.append("reqtype", "fileupload");
-      catboxForm.append("fileToUpload", audioFile);
+      // Send everything to our backend in one go — backend uploads
+      // to Catbox server-side (browsers get blocked by Catbox's CORS policy)
+      const formData = new FormData();
+      formData.append("user_id", userId());
+      formData.append("name", friendlyName);
+      formData.append("voice_file", mediaUrl);
+      formData.append("audio_file", audioFile);
 
-      const catboxRes = await fetch("https://catbox.moe/user/api.php", {
-        method: "POST",
-        body: catboxForm,
-      });
-      const uploadedUrl = (await catboxRes.text()).trim();
-
-      if (!uploadedUrl.startsWith("http")) {
-        showPopup("error", "Audio file upload failed, please try again ❌");
-        setAudioUploading(false);
-        return;
-      }
-
-      // 2) Save the record (Pending — waits for admin approval)
       const res  = await fetch(`${BASE}/upload-media/`, {
-        method : "POST",
-        headers: { "Content-Type": "application/json" },
-        body   : JSON.stringify({
-          user_id       : userId(),
-          name          : friendlyName,
-          voice_file    : mediaUrl,
-          media_file_url: uploadedUrl,
-        }),
+        method: "POST",
+        body  : formData,
       });
       const data = await res.json();
       if (data.status === "success") {
