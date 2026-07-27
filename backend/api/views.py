@@ -6,11 +6,13 @@ urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 import openpyxl
 
-from threading import Timer
+from threading import Timer, Thread
 from django.utils.dateparse import parse_datetime
+from django.core.cache import cache
+from django.db import transaction
 
 from rest_framework.decorators import api_view, parser_classes
-from rest_framework.parsers import MultiPartParser
+from rest_framework.parsers import MultiPartParser, JSONParser
 from rest_framework.response import Response
 
 from .models import (
@@ -44,6 +46,16 @@ CHATWAY_SEND_URL      = "https://int.chatway.in/api/send-msg"
 ADMIN_WHATSAPP_NUMBER = "918381845350"
 
 
+# =====================================
+# SHARED HTTP SESSION — connection pooling / keep-alive
+# reuses TCP+TLS connections across requests instead of a fresh
+# handshake every single call. Noticeably faster on repeated
+# OBD / Catbox / Chatway calls, especially on Render's network.
+# =====================================
+SESSION = requests.Session()
+SESSION.headers.update({"Connection": "keep-alive"})
+
+
 def send_whatsapp_notification(message, number=ADMIN_WHATSAPP_NUMBER):
     """Sends a WhatsApp text message via Chatway API. Never raises — logs and returns bool."""
     try:
@@ -53,12 +65,22 @@ def send_whatsapp_notification(message, number=ADMIN_WHATSAPP_NUMBER):
             "message" : message,
             "token"   : CHATWAY_TOKEN,
         }
-        resp = requests.get(CHATWAY_SEND_URL, params=params, timeout=15)
+        resp = SESSION.get(CHATWAY_SEND_URL, params=params, timeout=15)
         print(f"WHATSAPP NOTIFY -> status={resp.status_code} body={resp.text}")
         return resp.status_code == 200
     except Exception as e:
         print("WHATSAPP NOTIFY ERROR:", e)
         return False
+
+
+def notify_async(message, number=ADMIN_WHATSAPP_NUMBER):
+    """
+    Fire-and-forget WhatsApp notification. The API response to the
+    user does NOT wait for this — it fires in a background thread so
+    upload/approve endpoints return instantly instead of blocking on
+    a slow-ish external WhatsApp API call.
+    """
+    Thread(target=send_whatsapp_notification, args=(message, number), daemon=True).start()
 
 
 # =====================================
@@ -85,7 +107,8 @@ def complete_campaign_later(campaign_id, delay_seconds):
             c = VoiceCampaign.objects.get(id=campaign_id)
             if c.status == "pending":
                 c.status = "done"
-                c.save()
+                c.save(update_fields=["status"])
+                cache.delete_pattern("campaigns:*") if hasattr(cache, "delete_pattern") else cache.clear()
                 print(f"CAMPAIGN {campaign_id} AUTO-MARKED DONE after {delay_seconds}s")
         except Exception as e:
             print("AUTO COMPLETE ERROR:", e)
@@ -172,7 +195,7 @@ def make_bulk_obd_call(numbers, voice_file, retry_attempt="0", retry_duration="0
         "msisdn"        : numbers,
     }
     try:
-        response = requests.post(OBD_API_URL, json=payload, verify=False, timeout=30)
+        response = SESSION.post(OBD_API_URL, json=payload, verify=False, timeout=30)
         result   = response.json()
         print(f"=== OBD BULK CALL === numbers={len(numbers)} response={result}")
 
@@ -284,25 +307,28 @@ def update_user(request):
         if request.data.get("status"):
             user.status = request.data.get("status")
 
-        if add_credit > 0:
-            user.credit += add_credit
-            CreditHistory.objects.create(
-                user=user, amount=add_credit, type="credit",
-                remarks=f"{add_credit} Credits Added By {admin.username if admin else 'Admin'}",
-                created_by=admin
-            )
-        elif add_credit < 0:
-            remove_amount = abs(add_credit)
-            user.credit  -= remove_amount
-            if user.credit < 0:
-                user.credit = 0
-            CreditHistory.objects.create(
-                user=user, amount=remove_amount, type="debit",
-                remarks=f"{remove_amount} Credits Removed By {admin.username if admin else 'Admin'}",
-                created_by=admin
-            )
+        with transaction.atomic():
+            if add_credit > 0:
+                user.credit += add_credit
+                CreditHistory.objects.create(
+                    user=user, amount=add_credit, type="credit",
+                    remarks=f"{add_credit} Credits Added By {admin.username if admin else 'Admin'}",
+                    created_by=admin
+                )
+            elif add_credit < 0:
+                remove_amount = abs(add_credit)
+                user.credit  -= remove_amount
+                if user.credit < 0:
+                    user.credit = 0
+                CreditHistory.objects.create(
+                    user=user, amount=remove_amount, type="debit",
+                    remarks=f"{remove_amount} Credits Removed By {admin.username if admin else 'Admin'}",
+                    created_by=admin
+                )
 
-        user.save()
+            user.save()
+
+        cache.clear()
         return Response({"status": "success", "credit": user.credit})
     except Exception as e:
         print("UPDATE USER ERROR:", e)
@@ -317,6 +343,7 @@ def delete_user(request):
     try:
         user = User.objects.get(id=request.data.get("user_id"))
         user.delete()
+        cache.clear()
         return Response({"status": "success"})
     except Exception as e:
         print("DELETE USER ERROR:", e)
@@ -331,7 +358,7 @@ def toggle_user_status(request):
     try:
         user        = User.objects.get(id=request.data.get("user_id"))
         user.status = "Deactive" if user.status == "Active" else "Active"
-        user.save()
+        user.save(update_fields=["status"])
         return Response({"status": "success", "new_status": user.status})
     except Exception as e:
         print("TOGGLE STATUS ERROR:", e)
@@ -346,7 +373,7 @@ def reset_password(request):
     try:
         user          = User.objects.get(id=request.data.get("user_id"))
         user.password = request.data.get("password")
-        user.save()
+        user.save(update_fields=["password"])
         return Response({"status": "success"})
     except Exception as e:
         print("RESET PASSWORD ERROR:", e)
@@ -367,6 +394,8 @@ def add_caller_id(request):
             return Response({"status": "failed", "message": "Name and Number required"})
 
         obj = CallerID.objects.create(user=user, name=name, number=number)
+        cache.delete(f"caller_ids:{user.id}")
+        cache.delete("caller_ids:admin")
         return Response({"status": "success", "id": obj.id})
     except Exception as e:
         print("ADD CALLER ID ERROR:", e)
@@ -374,19 +403,26 @@ def add_caller_id(request):
 
 
 # =====================================
-# CALLER ID — GET LIST
+# CALLER ID — GET LIST (cached briefly — this dropdown gets hit
+# constantly from the campaign page, rarely changes)
 # =====================================
 @api_view(['GET'])
 def get_caller_ids(request):
     try:
         user = User.objects.get(id=request.GET.get("user_id"))
+        cache_key = f"caller_ids:{'admin' if user.role == 'admin' else user.id}"
+
+        cached = cache.get(cache_key)
+        if cached is not None:
+            return Response(cached)
 
         if user.role == "admin":
-            ids = CallerID.objects.all().order_by("-id")
+            ids = CallerID.objects.select_related("user").all().order_by("-id")
         else:
             ids = CallerID.objects.filter(user=user).order_by("-id")
 
         data = [{"id": c.id, "name": c.name, "number": c.number} for c in ids]
+        cache.set(cache_key, data, timeout=15)
         return Response(data)
     except Exception as e:
         print("GET CALLER IDS ERROR:", e)
@@ -401,6 +437,7 @@ def delete_caller_id(request):
     try:
         obj = CallerID.objects.get(id=request.data.get("caller_id"))
         obj.delete()
+        cache.clear()
         return Response({"status": "success"})
     except Exception as e:
         print("DELETE CALLER ID ERROR:", e)
@@ -409,37 +446,46 @@ def delete_caller_id(request):
 
 # =====================================
 # UPLOAD MEDIA
+# Accepts EITHER:
+#   media_url   -> frontend already uploaded directly to Cloudinary
+#                  (fast path, no server proxy, no timeout risk)
+#   audio_file  -> old catbox.moe server-side proxy (fallback only)
 # =====================================
 @api_view(['POST'])
-@parser_classes([MultiPartParser])
+@parser_classes([MultiPartParser, JSONParser])
 def upload_media(request):
     try:
         user       = User.objects.get(id=request.data.get("user_id"))
         name       = request.data.get("name", "Untitled")
         voice_file = (request.data.get("voice_file") or "").strip()
+        media_url  = (request.data.get("media_url") or "").strip()
         audio_file = request.FILES.get("audio_file")
 
         if not voice_file:
             return Response({"status": "failed", "message": "Voice filename required"})
-        if not audio_file:
-            return Response({"status": "failed", "message": "Audio file upload required"})
 
-        # Upload to Catbox from the SERVER side — browsers can't call
-        # catbox.moe directly because it doesn't send CORS headers back.
-        try:
-            catbox_resp = requests.post(
-                "https://catbox.moe/user/api.php",
-                data={"reqtype": "fileupload"},
-                files={"fileToUpload": (audio_file.name, audio_file.read(), audio_file.content_type)},
-                timeout=30,
-            )
-            media_file_url = catbox_resp.text.strip()
-            if not media_file_url.startswith("http"):
-                print("CATBOX UPLOAD FAILED RESPONSE:", media_file_url)
-                return Response({"status": "failed", "message": "Audio hosting failed, please try again"})
-        except Exception as e:
-            print("CATBOX UPLOAD ERROR:", e)
-            return Response({"status": "failed", "message": "Audio upload failed"})
+        if media_url and media_url.startswith("http"):
+            # FAST PATH — already hosted by the browser, nothing to upload here
+            media_file_url = media_url
+
+        elif audio_file:
+            # FALLBACK PATH — old proxy-through-Render-to-catbox approach
+            try:
+                catbox_resp = SESSION.post(
+                    "https://catbox.moe/user/api.php",
+                    data={"reqtype": "fileupload"},
+                    files={"fileToUpload": (audio_file.name, audio_file.read(), audio_file.content_type)},
+                    timeout=60,
+                )
+                media_file_url = catbox_resp.text.strip()
+                if not media_file_url.startswith("http"):
+                    print("CATBOX UPLOAD FAILED RESPONSE:", media_file_url)
+                    return Response({"status": "failed", "message": "Audio hosting failed, please try again"})
+            except Exception as e:
+                print("CATBOX UPLOAD ERROR:", e)
+                return Response({"status": "failed", "message": "Audio upload failed"})
+        else:
+            return Response({"status": "failed", "message": "Audio file or media_url required"})
 
         media_obj = VoiceMediaFile.objects.create(
             user=user, name=name,
@@ -447,14 +493,15 @@ def upload_media(request):
             status="Pending",
         )
 
-        notify_msg = (
+        cache.clear()  # invalidate media-file list caches
+
+        notify_async(
             f"🔔 New Voice File Uploaded\n\n"
             f"Name: {name}\n"
             f"File: {voice_file}\n"
             f"By: {user.username}\n\n"
             f"Login to admin panel to approve."
         )
-        send_whatsapp_notification(notify_msg)
 
         return Response({"status": "success", "media_id": media_obj.id})
     except Exception as e:
@@ -476,7 +523,8 @@ def approve_media(request):
 
         media_obj        = VoiceMediaFile.objects.get(id=request.data.get("media_id"))
         media_obj.status = "Approved"
-        media_obj.save()
+        media_obj.save(update_fields=["status"])
+        cache.clear()
 
         return Response({"status": "success", "media_id": media_obj.id})
     except Exception as e:
@@ -493,7 +541,8 @@ def update_media_id(request):
         media_obj               = VoiceMediaFile.objects.get(id=request.data.get("media_id"))
         voice_file_id           = request.data.get("voice_file_id") or request.data.get("media_file_id", "")
         media_obj.voice_file_id = voice_file_id
-        media_obj.save()
+        media_obj.save(update_fields=["voice_file_id"])
+        cache.clear()
         return Response({"status": "success"})
     except Exception as e:
         print("UPDATE MEDIA ID ERROR:", e)
@@ -501,7 +550,8 @@ def update_media_id(request):
 
 
 # =====================================
-# GET MEDIA FILES
+# GET MEDIA FILES (cached briefly — hit on every page load
+# of Audio File + Campaign pages)
 # =====================================
 @api_view(['GET'])
 def get_media_files(request):
@@ -509,7 +559,12 @@ def get_media_files(request):
         user          = User.objects.get(id=request.GET.get("user_id"))
         only_approved = request.GET.get("only_approved") == "true"
 
-        files = VoiceMediaFile.objects.all().order_by("-id") if user.role == "admin" \
+        cache_key = f"media_files:{user.id}:{user.role}:{only_approved}"
+        cached = cache.get(cache_key)
+        if cached is not None:
+            return Response(cached)
+
+        files = VoiceMediaFile.objects.select_related("user").all().order_by("-id") if user.role == "admin" \
                 else VoiceMediaFile.objects.filter(user=user).order_by("-id")
 
         if only_approved:
@@ -524,6 +579,8 @@ def get_media_files(request):
             "status"       : f.status,
             "created_at"   : f.created_at.isoformat(),
         } for f in files]
+
+        cache.set(cache_key, data, timeout=8)
         return Response(data)
     except Exception as e:
         print("GET MEDIA FILES ERROR:", e)
@@ -537,6 +594,7 @@ def get_media_files(request):
 def delete_media(request):
     try:
         VoiceMediaFile.objects.get(id=request.data.get("media_id")).delete()
+        cache.clear()
         return Response({"status": "success"})
     except Exception as e:
         print("DELETE MEDIA ERROR:", e)
@@ -642,14 +700,17 @@ def send_bulk_voice(request):
         credit_to_deduct = total_entered if is_over_limit else success_count
 
         if credit_to_deduct > 0 and user.role != "admin":
-            user.credit -= credit_to_deduct
-            if user.credit < 0:
-                user.credit = 0
-            user.save()
-            CreditHistory.objects.create(
-                user=user, amount=credit_to_deduct, type="debit",
-                remarks=f"{credit_to_deduct} Credits Debited For Voice Campaign — {campaign_name}"
-            )
+            with transaction.atomic():
+                user.credit -= credit_to_deduct
+                if user.credit < 0:
+                    user.credit = 0
+                user.save(update_fields=["credit"])
+                CreditHistory.objects.create(
+                    user=user, amount=credit_to_deduct, type="debit",
+                    remarks=f"{credit_to_deduct} Credits Debited For Voice Campaign — {campaign_name}"
+                )
+
+        cache.clear()  # campaign list is now stale
 
         return Response({
             "status"     : "done",
@@ -724,6 +785,8 @@ def schedule_campaign(request):
             results=pending_results,
         )
 
+        cache.clear()
+
         return Response({
             "status"      : "scheduled",
             "campaign_id" : campaign.id,
@@ -737,20 +800,36 @@ def schedule_campaign(request):
 
 # =====================================
 # GET CAMPAIGNS
+# Cached briefly (8s) per user+role. "results" (can be a huge JSON
+# blob for 100-number campaigns) is intentionally left OUT of the
+# list response — the list view never needed it, only the detail
+# view does. This alone can cut payload size drastically for accounts
+# with many/large campaigns -> much faster load, especially on mobile.
+# Optional ?limit=N to cap how many rows come back (default 300).
 # =====================================
 @api_view(['GET'])
 def get_campaigns(request):
     try:
-        user = User.objects.get(id=request.GET.get("user_id"))
+        user  = User.objects.get(id=request.GET.get("user_id"))
+        limit = request.GET.get("limit")
+        try:
+            limit = int(limit) if limit else 300
+        except ValueError:
+            limit = 300
+
+        cache_key = f"campaigns:{user.id}:{user.role}:{limit}"
+        cached = cache.get(cache_key)
+        if cached is not None:
+            return Response(cached)
 
         if user.role == "admin":
-            campaigns = VoiceCampaign.objects.all().order_by("-id")
+            campaigns = VoiceCampaign.objects.select_related("user").all().order_by("-id")[:limit]
         elif user.role == "reseller":
-            campaigns = VoiceCampaign.objects.filter(
+            campaigns = VoiceCampaign.objects.select_related("user").filter(
                 user__in=[user] + list(user.children.all())
-            ).order_by("-id")
+            ).order_by("-id")[:limit]
         else:
-            campaigns = VoiceCampaign.objects.filter(user=user).order_by("-id")
+            campaigns = VoiceCampaign.objects.select_related("user").filter(user=user).order_by("-id")[:limit]
 
         data = [{
             "id"           : c.id,
@@ -769,8 +848,11 @@ def get_campaigns(request):
             "scheduled_at" : c.scheduled_at.isoformat() if c.scheduled_at else None,
             "created_at"   : c.created_at.isoformat(),
             "username"     : c.user.username,
-            "results"      : c.results,
+            # "results" intentionally omitted here — use get-campaign-detail/
+            # for that. Keeps this list endpoint light and fast.
         } for c in campaigns]
+
+        cache.set(cache_key, data, timeout=8)
         return Response(data)
     except Exception as e:
         print("GET CAMPAIGNS ERROR:", e)
@@ -785,7 +867,7 @@ def get_campaigns(request):
 @api_view(['GET'])
 def get_campaign_detail(request):
     try:
-        c = VoiceCampaign.objects.get(
+        c = VoiceCampaign.objects.select_related("user").get(
             id=request.GET.get("campaign_id")
         )
 
@@ -854,6 +936,11 @@ def get_campaign_detail(request):
 #      campaigns whose results contain that number
 # Rows that can't be matched are still saved (campaign=None) so no
 # data is lost — you can see them as "Unmatched" in the response.
+#
+# Wrapped in transaction.atomic() — previously every row committed
+# to the DB individually (slow for big files, 1000+ rows = 1000+
+# round trips). Now everything commits once at the end -> much
+# faster imports.
 # =====================================
 @api_view(['POST'])
 @parser_classes([MultiPartParser])
@@ -869,7 +956,7 @@ def upload_disposition_report(request):
         if not file_obj:
             return Response({"status": "failed", "message": "No file uploaded"})
 
-        wb = openpyxl.load_workbook(file_obj, data_only=True)
+        wb = openpyxl.load_workbook(file_obj, data_only=True, read_only=True)
         ws = wb.worksheets[0]
         rows = list(ws.iter_rows(values_only=True))
 
@@ -917,66 +1004,74 @@ def upload_disposition_report(request):
 
         matched_count, unmatched_count, updated_count, created_count = 0, 0, 0, 0
 
-        for row in rows[1:]:
-            if not row or not any(row):
-                continue
+        # Pre-fetch campaigns with a job_id once, so job_id matching below
+        # doesn't hit the DB per-row for the common case.
+        job_id_map = {
+            c.job_id: c
+            for c in VoiceCampaign.objects.exclude(job_id="").only("id", "job_id")
+        }
 
-            mobile = g(row, "phone")
-            if not mobile:
-                continue
+        with transaction.atomic():
+            for row in rows[1:]:
+                if not row or not any(row):
+                    continue
 
-            obd_camp_name = g(row, "campaign")
-            call_date     = g(row, "date")
+                mobile = g(row, "phone")
+                if not mobile:
+                    continue
 
-            # ---- 1) match via job_id embedded in OBD Campaign Name ----
-            campaign = None
-            job_match = re.search(r'API_(\d+)_', obd_camp_name)
-            if job_match:
-                campaign = VoiceCampaign.objects.filter(job_id=job_match.group(1)).first()
+                obd_camp_name = g(row, "campaign")
+                call_date     = g(row, "date")
 
-            # ---- 2) fallback: phone number appears in campaign.results + same date ----
-            if not campaign:
-                candidates = VoiceCampaign.objects.filter(results__icontains=mobile).order_by("-id")
-                for cand in candidates:
-                    if call_date and cand.created_at.strftime("%Y-%m-%d") == call_date:
-                        campaign = cand
-                        break
-                if not campaign and candidates.exists():
-                    campaign = candidates.first()
+                # ---- 1) match via job_id embedded in OBD Campaign Name ----
+                campaign = None
+                job_match = re.search(r'API_(\d+)_', obd_camp_name)
+                if job_match:
+                    campaign = job_id_map.get(job_match.group(1))
 
-            obj, created = VoiceCallDisposition.objects.update_or_create(
-                mobile=mobile,
-                dial_time=g(row, "dial"),
-                obd_campaign_name=obd_camp_name,
-                defaults=dict(
-                    campaign=campaign,
-                    username=g(row, "username"),
-                    call_date=call_date,
-                    service_no=g(row, "service"),
-                    answered_time=g(row, "answered"),
-                    end_time=g(row, "end"),
-                    duration_secs=to_int(g(row, "duration")),
-                    call_status=g(row, "status"),
-                    call_flow=g(row, "flow"),
-                    disposition=g(row, "disposition"),
-                    retry=to_int(g(row, "retry")),
-                    pulse=to_int(g(row, "pulse")),
-                    cost=g(row, "cost"),
-                    dtmf_input=g(row, "dtmf"),
-                    prompt_length=g(row, "prompt"),
-                    tts_count=g(row, "tts"),
+                # ---- 2) fallback: phone number appears in campaign.results + same date ----
+                if not campaign:
+                    candidates = VoiceCampaign.objects.filter(results__icontains=mobile).order_by("-id")
+                    for cand in candidates:
+                        if call_date and cand.created_at.strftime("%Y-%m-%d") == call_date:
+                            campaign = cand
+                            break
+                    if not campaign and candidates.exists():
+                        campaign = candidates.first()
+
+                obj, created = VoiceCallDisposition.objects.update_or_create(
+                    mobile=mobile,
+                    dial_time=g(row, "dial"),
+                    obd_campaign_name=obd_camp_name,
+                    defaults=dict(
+                        campaign=campaign,
+                        username=g(row, "username"),
+                        call_date=call_date,
+                        service_no=g(row, "service"),
+                        answered_time=g(row, "answered"),
+                        end_time=g(row, "end"),
+                        duration_secs=to_int(g(row, "duration")),
+                        call_status=g(row, "status"),
+                        call_flow=g(row, "flow"),
+                        disposition=g(row, "disposition"),
+                        retry=to_int(g(row, "retry")),
+                        pulse=to_int(g(row, "pulse")),
+                        cost=g(row, "cost"),
+                        dtmf_input=g(row, "dtmf"),
+                        prompt_length=g(row, "prompt"),
+                        tts_count=g(row, "tts"),
+                    )
                 )
-            )
 
-            if campaign:
-                matched_count += 1
-            else:
-                unmatched_count += 1
+                if campaign:
+                    matched_count += 1
+                else:
+                    unmatched_count += 1
 
-            if created:
-                created_count += 1
-            else:
-                updated_count += 1
+                if created:
+                    created_count += 1
+                else:
+                    updated_count += 1
 
         return Response({
             "status"    : "success",
@@ -1012,7 +1107,7 @@ def change_password(request):
             return Response({"status": "failed", "message": "New password must be at least 3 characters"})
 
         user.password = new_password
-        user.save()
+        user.save(update_fields=["password"])
         return Response({"status": "success"})
     except User.DoesNotExist:
         return Response({"status": "failed", "message": "User not found"})
@@ -1030,10 +1125,12 @@ def list_users(request):
         logged_user = User.objects.get(id=request.GET.get("user_id"))
 
         if logged_user.role == "admin":
-            users = User.objects.all().order_by("-id")
+            users = User.objects.select_related("parent").all().order_by("-id")
         elif logged_user.role == "reseller":
             child_ids = list(logged_user.children.values_list("id", flat=True))
-            users     = User.objects.filter(id__in=[logged_user.id] + child_ids).order_by("-id")
+            users     = User.objects.select_related("parent").filter(
+                id__in=[logged_user.id] + child_ids
+            ).order_by("-id")
         else:
             users = User.objects.filter(id=logged_user.id)
 
@@ -1066,12 +1163,16 @@ def credit_history(request):
         logged_user = User.objects.get(id=request.GET.get("user_id"))
 
         if logged_user.role == "admin":
-            history = CreditHistory.objects.all().order_by("-id")
+            history = CreditHistory.objects.select_related("user", "created_by").all().order_by("-id")
         elif logged_user.role == "reseller":
             users   = [logged_user] + list(logged_user.children.all())
-            history = CreditHistory.objects.filter(user__in=users).order_by("-id")
+            history = CreditHistory.objects.select_related("user", "created_by").filter(
+                user__in=users
+            ).order_by("-id")
         else:
-            history = CreditHistory.objects.filter(user=logged_user).order_by("-id")
+            history = CreditHistory.objects.select_related("user", "created_by").filter(
+                user=logged_user
+            ).order_by("-id")
 
         data = [{
             "username"  : h.user.username,

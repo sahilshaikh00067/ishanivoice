@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from "react";
 import { FaUsers, FaPaperPlane, FaLayerGroup, FaCalendarAlt } from "react-icons/fa";
+import { AlertCircle, CheckCircle2, Loader2 } from "lucide-react";
 import { BASE } from "../api";
 
 export default function VoiceCampaign() {
@@ -33,6 +34,22 @@ export default function VoiceCampaign() {
   const [scheduleDate, setScheduleDate] = useState("");
   const [scheduleTime, setScheduleTime] = useState("");
   const [scheduleLoading, setScheduleLoading] = useState(false);
+  const [testCallLoading, setTestCallLoading] = useState(false);
+
+  // ── PREMIUM POPUP (replaces alert()) ──
+  const [popup, setPopup] = useState(false);
+  const [popupType, setPopupType] = useState("success"); // "success" | "error"
+  const [popupTitle, setPopupTitle] = useState("");
+  const [popupMsg, setPopupMsg] = useState("");
+  const [popupStats, setPopupStats] = useState(null); // [[label, value], ...] optional grid
+
+  const showPopup = (t, title, m, stats = null) => {
+    setPopupType(t);
+    setPopupTitle(title);
+    setPopupMsg(m);
+    setPopupStats(stats);
+    setPopup(true);
+  };
 
   const groups = [
     { name: "Demo Group", total: 150 },
@@ -102,7 +119,7 @@ export default function VoiceCampaign() {
   // CSV → NUMBERS
   // ==============================
   const handleFileUpload = () => {
-    if (!uploadFile) { alert("Please select a file ❌"); return; }
+    if (!uploadFile) { showPopup("error", "Error", "Please select a file"); return; }
     const reader = new FileReader();
     reader.onload = (e) => {
       const text = e.target.result;
@@ -115,10 +132,10 @@ export default function VoiceCampaign() {
             .filter(n => /^\d{10}$/.test(n))
         )];
         setNumbers(merged.join(","));
-        alert(`✅ ${nums.length} valid numbers loaded`);
+        showPopup("success", "Loaded", `${nums.length} valid numbers loaded`);
         setShowUploadPopup(false);
       } else {
-        alert("No valid 10-digit numbers found ❌");
+        showPopup("error", "Error", "No valid 10-digit numbers found in this file");
       }
     };
     reader.readAsText(uploadFile);
@@ -128,10 +145,11 @@ export default function VoiceCampaign() {
   // TEST CALL
   // ==============================
   const handleTestCall = async () => {
-    if (!/^\d{10}$/.test(testNumber)) { alert("Enter a valid 10 digit number ❌"); return; }
-    if (!selectedMediaId) { alert("Select Voice File ❌"); return; }
-    if (!callerId) { alert("Select Caller ID ❌"); return; }
+    if (!/^\d{10}$/.test(testNumber)) { showPopup("error", "Error", "Enter a valid 10 digit number"); return; }
+    if (!selectedMediaId) { showPopup("error", "Error", "Select Voice File"); return; }
+    if (!callerId) { showPopup("error", "Error", "Select Caller ID"); return; }
     try {
+      setTestCallLoading(true);
       const res = await fetch(`${BASE}/send-bulk-voice/`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -144,9 +162,16 @@ export default function VoiceCampaign() {
         }),
       });
       const data = await res.json();
-      alert(data.status === "done" ? "✅ Test Call Sent!" : `❌ Failed: ${data.message || ""}`);
-    } catch { alert("Error ❌"); }
-    setShowTestPopup(false);
+      setShowTestPopup(false);
+      if (data.status === "done") {
+        showPopup("success", "Test Call Sent!", `Test call dispatched to ${testNumber}`);
+      } else {
+        showPopup("error", "Failed", data.message || "Test call could not be sent");
+      }
+    } catch {
+      showPopup("error", "Error", "Network error while sending test call");
+    }
+    setTestCallLoading(false);
   };
 
   // ==============================
@@ -158,9 +183,9 @@ export default function VoiceCampaign() {
     setShowConfirm(false);
 
     const numberList = getValidNumbers(numbers);
-    if (numberList.length === 0) { alert("Please Enter Valid 10 Digit Numbers ❌"); setLoading(false); return; }
-    if (!selectedMediaId) { alert("Please Select Voice File ❌"); setLoading(false); return; }
-    if (!callerId) { alert("Please Select Caller ID ❌"); setLoading(false); return; }
+    if (numberList.length === 0) { showPopup("error", "Error", "Please enter valid 10 digit numbers"); setLoading(false); return; }
+    if (!selectedMediaId) { showPopup("error", "Error", "Please select a voice file"); setLoading(false); return; }
+    if (!callerId) { showPopup("error", "Error", "Please select a caller ID"); setLoading(false); return; }
 
     try {
       const res = await fetch(`${BASE}/send-bulk-voice/`, {
@@ -176,12 +201,24 @@ export default function VoiceCampaign() {
       });
       const data = await res.json();
       if (data.status === "done") {
-        alert(`🚀 Campaign Sent!\n\nTotal: ${data.total}\nSuccess: ${data.success}\nFailed: ${data.failed}\nInvalid: ${data.invalid}`);
+        showPopup(
+          "success",
+          "Campaign Sent! 🚀",
+          "Your voice campaign has been dispatched successfully.",
+          [
+            ["Total", data.total],
+            ["Success", data.success],
+            ["Failed", data.failed],
+            ["Invalid", data.invalid],
+          ]
+        );
         setNumbers(""); setSelectedMediaId("");
       } else {
-        alert(`❌ Error: ${data.message || "Something went wrong"}`);
+        showPopup("error", "Error", data.message || "Something went wrong");
       }
-    } catch { alert("Network Error ❌"); }
+    } catch {
+      showPopup("error", "Network Error", "Please check your connection and try again");
+    }
     setLoading(false);
   };
 
@@ -189,11 +226,11 @@ export default function VoiceCampaign() {
   // SCHEDULE CAMPAIGN — no limit
   // ==============================
   const handleSchedule = async () => {
-    if (!scheduleDate || !scheduleTime) { alert("Please select date and time ❌"); return; }
+    if (!scheduleDate || !scheduleTime) { showPopup("error", "Error", "Please select date and time"); return; }
     const numberList = getValidNumbers(numbers);
-    if (numberList.length === 0) { alert("Please Enter Valid 10 Digit Numbers ❌"); return; }
-    if (!selectedMediaId) { alert("Please Select Voice File ❌"); return; }
-    if (!callerId) { alert("Please Select Caller ID ❌"); return; }
+    if (numberList.length === 0) { showPopup("error", "Error", "Please enter valid 10 digit numbers"); return; }
+    if (!selectedMediaId) { showPopup("error", "Error", "Please select a voice file"); return; }
+    if (!callerId) { showPopup("error", "Error", "Please select a caller ID"); return; }
 
     try {
       setScheduleLoading(true);
@@ -211,12 +248,20 @@ export default function VoiceCampaign() {
       });
       const data = await res.json();
       if (data.status === "scheduled") {
-        alert(`✅ Campaign Scheduled!\n\nTotal: ${data.total}\nAt: ${scheduleDate} ${scheduleTime}`);
-        setNumbers(""); setSelectedMediaId(""); setShowSchedulePopup(false);
+        setShowSchedulePopup(false);
+        showPopup(
+          "success",
+          "Campaign Scheduled! ✅",
+          `Will run on ${scheduleDate} at ${scheduleTime}`,
+          [["Total Numbers", data.total]]
+        );
+        setNumbers(""); setSelectedMediaId("");
       } else {
-        alert(`❌ Error: ${data.message || "Something went wrong"}`);
+        showPopup("error", "Error", data.message || "Something went wrong");
       }
-    } catch { alert("Network Error ❌"); }
+    } catch {
+      showPopup("error", "Network Error", "Please check your connection and try again");
+    }
     setScheduleLoading(false);
   };
 
@@ -383,7 +428,7 @@ export default function VoiceCampaign() {
           <div className="flex flex-wrap gap-5 mt-10 items-center">
             <button onClick={() => setShowConfirm(true)} disabled={loading}
               className="bg-[#e95d96] hover:scale-105 duration-300 text-white px-9 h-[50px] rounded-xl flex items-center gap-3 shadow-lg font-semibold disabled:opacity-50">
-              <FaPaperPlane />
+              {loading ? <Loader2 size={16} className="animate-spin" /> : <FaPaperPlane />}
               {loading ? "Sending..." : "Send Now"}
             </button>
             <span className="text-gray-500 text-[15px] font-medium">or</span>
@@ -492,8 +537,11 @@ export default function VoiceCampaign() {
               <div className="flex justify-end gap-3 mt-7">
                 <button onClick={() => setShowTestPopup(false)}
                   className="bg-[#ff5c5c] text-white px-6 h-[42px] rounded-lg font-medium">Close</button>
-                <button onClick={handleTestCall}
-                  className="bg-[#39d65d] text-white px-6 h-[42px] rounded-lg font-medium">Test Call</button>
+                <button onClick={handleTestCall} disabled={testCallLoading}
+                  className="bg-[#39d65d] disabled:opacity-60 text-white px-6 h-[42px] rounded-lg font-medium flex items-center gap-2">
+                  {testCallLoading && <Loader2 size={14} className="animate-spin" />}
+                  {testCallLoading ? "Sending..." : "Test Call"}
+                </button>
               </div>
             </div>
           </div>
@@ -529,7 +577,8 @@ export default function VoiceCampaign() {
                 <button onClick={() => setShowSchedulePopup(false)}
                   className="bg-[#ff5c5c] text-white px-6 h-[44px] rounded-xl font-semibold">Close</button>
                 <button onClick={handleSchedule} disabled={scheduleLoading}
-                  className="bg-[#3d2d83] hover:bg-[#2c2063] disabled:opacity-50 text-white px-6 h-[44px] rounded-xl font-semibold">
+                  className="bg-[#3d2d83] hover:bg-[#2c2063] disabled:opacity-50 text-white px-6 h-[44px] rounded-xl font-semibold flex items-center gap-2">
+                  {scheduleLoading && <Loader2 size={14} className="animate-spin" />}
                   {scheduleLoading ? "Scheduling..." : "Schedule"}
                 </button>
               </div>
@@ -561,6 +610,37 @@ export default function VoiceCampaign() {
               <button onClick={() => setShowConfirm(false)}
                 className="bg-[#ff5c5c] text-white px-8 h-[48px] rounded-xl font-semibold hover:scale-105 duration-300 shadow-lg">Cancel</button>
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* PREMIUM RESULT POPUP — replaces alert() everywhere above */}
+      {popup && (
+        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-[60] p-4">
+          <div className="bg-white w-full max-w-[360px] rounded-3xl p-6 text-center shadow-2xl">
+            <div className="flex justify-center mb-4">
+              {popupType === "error"
+                ? <AlertCircle size={55} className="text-red-500" />
+                : <CheckCircle2 size={55} className="text-green-500" />}
+            </div>
+            <h2 className="text-[24px] font-bold mb-2">{popupTitle}</h2>
+            <p className="text-[15px] text-gray-600">{popupMsg}</p>
+
+            {popupStats && (
+              <div className="grid grid-cols-2 gap-2 mt-5">
+                {popupStats.map(([label, val]) => (
+                  <div key={label} className="bg-gray-50 rounded-xl px-3 py-2">
+                    <p className="text-[11px] text-gray-400">{label}</p>
+                    <p className="text-[18px] font-bold text-gray-700">{val}</p>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            <button
+              onClick={() => setPopup(false)}
+              className={`mt-6 px-6 py-2 rounded-full text-white text-[15px] font-semibold ${popupType === "error" ? "bg-red-500" : "bg-green-500"}`}
+            >OK</button>
           </div>
         </div>
       )}

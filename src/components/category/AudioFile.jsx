@@ -1,6 +1,50 @@
 import React, { useEffect, useRef, useState } from "react";
-import { AlertCircle, CheckCircle2, Trash2, Info, Phone, ShieldCheck, UploadCloud, Download, Music } from "lucide-react";
+import { AlertCircle, CheckCircle2, Trash2, Info, Phone, ShieldCheck, UploadCloud, Download, Music, Loader2 } from "lucide-react";
 import { BASE } from "../api";
+
+// =====================================
+// CLOUDINARY CONFIG — fill these 2 values
+// (Dashboard → Cloud name, Settings → Upload → your unsigned preset)
+// =====================================
+const CLOUDINARY_CLOUD_NAME = "x1s3wisn";
+const CLOUDINARY_UPLOAD_PRESET = "voice_uploads";
+
+// Cloudinary treats audio files under the "video" resource type
+const CLOUDINARY_UPLOAD_URL = `https://api.cloudinary.com/v1_1/${CLOUDINARY_CLOUD_NAME}/video/upload`;
+
+// Direct browser -> Cloudinary upload with live progress, no backend proxy involved
+function uploadToCloudinary(file, onProgress) {
+  return new Promise((resolve, reject) => {
+    const formData = new FormData();
+    formData.append("file", file);
+    formData.append("upload_preset", CLOUDINARY_UPLOAD_PRESET);
+
+    const xhr = new XMLHttpRequest();
+    xhr.open("POST", CLOUDINARY_UPLOAD_URL);
+
+    xhr.upload.onprogress = (e) => {
+      if (e.lengthComputable) {
+        onProgress(Math.round((e.loaded / e.total) * 100));
+      }
+    };
+
+    xhr.onload = () => {
+      if (xhr.status >= 200 && xhr.status < 300) {
+        try {
+          const data = JSON.parse(xhr.responseText);
+          resolve(data.secure_url);
+        } catch {
+          reject(new Error("Invalid response from hosting"));
+        }
+      } else {
+        reject(new Error("Upload failed — check Cloudinary preset/cloud name"));
+      }
+    };
+
+    xhr.onerror = () => reject(new Error("Network error during upload"));
+    xhr.send(formData);
+  });
+}
 
 export default function AudioFile() {
 
@@ -12,6 +56,8 @@ export default function AudioFile() {
   const [loadingList,  setLoadingList]  = useState(false);
   const [approvingId,  setApprovingId]  = useState(null);
   const [audioUploading, setAudioUploading] = useState(false);
+  const [uploadProgress, setUploadProgress] = useState(0);
+  const [dragActive, setDragActive] = useState(false);
   const fileInputRef = useRef(null);
 
   // ── CALLER ID STATES ──
@@ -39,7 +85,6 @@ export default function AudioFile() {
   const loadMedia = async () => {
     try {
       setLoadingList(true);
-      // No only_approved param here -> returns Pending + Approved (own files / all for admin)
       const res  = await fetch(`${BASE}/get-media-files/?user_id=${userId()}`);
       const data = await res.json();
       setMediaList(Array.isArray(data) ? data : []);
@@ -47,33 +92,51 @@ export default function AudioFile() {
     setLoadingList(false);
   };
 
-  const handleFileSelect = (e) => {
-    const file = e.target.files[0];
+  const pickFile = (file) => {
     if (!file) return;
+    if (!file.type.startsWith("audio/")) {
+      showPopup("error", "Please select a valid audio file");
+      return;
+    }
     setAudioFile(file);
   };
 
+  const handleFileSelect = (e) => pickFile(e.target.files[0]);
+
+  const handleDrop = (e) => {
+    e.preventDefault();
+    setDragActive(false);
+    pickFile(e.dataTransfer.files?.[0]);
+  };
+
+  // ==============================
+  // UPLOAD — direct to Cloudinary, then just tell backend the URL
+  // ==============================
   const handleUpload = async () => {
     if (!friendlyName.trim()) { showPopup("error", "Please enter a name"); return; }
     if (!mediaUrl.trim())     { showPopup("error", "Please enter voice filename (e.g. Today.wav)"); return; }
     if (!audioFile)           { showPopup("error", "Please select the audio file to upload"); return; }
 
+    setAudioUploading(true);
+    setUploadProgress(0);
+
     try {
-      setAudioUploading(true);
+      // 1) Fast direct upload straight from the browser to Cloudinary's CDN
+      const hostedUrl = await uploadToCloudinary(audioFile, setUploadProgress);
 
-      // Send everything to our backend in one go — backend uploads
-      // to Catbox server-side (browsers get blocked by Catbox's CORS policy)
-      const formData = new FormData();
-      formData.append("user_id", userId());
-      formData.append("name", friendlyName);
-      formData.append("voice_file", mediaUrl);
-      formData.append("audio_file", audioFile);
-
-      const res  = await fetch(`${BASE}/upload-media/`, {
+      // 2) Tell our backend the file's already hosted — instant save, no re-upload
+      const res = await fetch(`${BASE}/upload-media/`, {
         method: "POST",
-        body  : formData,
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          user_id: userId(),
+          name: friendlyName,
+          voice_file: mediaUrl,
+          media_url: hostedUrl,
+        }),
       });
       const data = await res.json();
+
       if (data.status === "success") {
         showPopup("success", "Voice file uploaded! It will be available for sending after admin approval.");
         setMediaUrl(""); setFriendlyName(""); setAudioFile(null);
@@ -84,9 +147,11 @@ export default function AudioFile() {
       }
     } catch (err) {
       console.log(err);
-      showPopup("error", "Network Error ❌");
+      showPopup("error", err.message || "Upload failed, please try again ❌");
     }
+
     setAudioUploading(false);
+    setUploadProgress(0);
   };
 
   const handleDeleteMedia = async (mediaId) => {
@@ -99,7 +164,7 @@ export default function AudioFile() {
       });
       const data = await res.json();
       if (data.status === "success") loadMedia();
-    } catch { alert("Error ❌"); }
+    } catch { showPopup("error", "Error ❌"); }
   };
 
   const handleApproveMedia = async (mediaId) => {
@@ -164,7 +229,7 @@ export default function AudioFile() {
       });
       const data = await res.json();
       if (data.status === "success") loadCallerIds();
-    } catch { alert("Error ❌"); }
+    } catch { showPopup("error", "Error ❌"); }
   };
 
   // ==============================
@@ -178,19 +243,6 @@ export default function AudioFile() {
             SECTION 1 — VOICE FILES
         ════════════════════════════════ */}
         <h1 className="text-[28px] font-bold text-[#1d2756] mb-4">Upload Voice File</h1>
-
-        {/* OBD NOTICE */}
-        {/* <div className="bg-blue-50 border border-blue-300 rounded-2xl px-5 py-4 mb-6 flex gap-3">
-          <Info size={22} className="text-blue-500 mt-1 shrink-0" />
-          <div>
-            <p className="text-[15px] font-bold text-blue-700 mb-1">OBD Voice File Setup</p>
-            <p className="text-[13px] text-blue-600 leading-6">
-              Enter the exact filename as it's uploaded on the OBD server (for calling), and also
-              upload the actual audio file here (for record, playback & download).<br />
-              Example filename: <strong>Today.wav</strong> • <strong>Welcome.mp3</strong> • <strong>Diwali_Offer.wav</strong>
-            </p>
-          </div>
-        </div> */}
 
         {/* APPROVAL NOTICE (shown to non-admins) */}
         {!isAdmin && (
@@ -212,7 +264,7 @@ export default function AudioFile() {
             type="text" value={friendlyName}
             onChange={(e) => setFriendlyName(e.target.value)}
             placeholder="Audio Name (e.g. Diwali Campaign)"
-            className="w-full max-w-[540px] h-[50px] border border-gray-300 rounded-xl px-4 outline-none focus:border-pink-400 text-[15px]"
+            className="w-full max-w-[540px] h-[50px] border border-gray-300 rounded-xl px-4 outline-none focus:border-pink-400 text-[15px] transition-colors"
           />
         </div>
 
@@ -222,38 +274,66 @@ export default function AudioFile() {
             type="text" value={mediaUrl}
             onChange={(e) => setMediaUrl(e.target.value)}
             placeholder="Voice filename Only .wav & .mp3 form e.g. abc.wav , xyz.mp3"
-            className="w-full max-w-[540px] h-[50px] border border-gray-300 rounded-xl px-4 outline-none focus:border-pink-400 text-[14px]"
+            className="w-full max-w-[540px] h-[50px] border border-gray-300 rounded-xl px-4 outline-none focus:border-pink-400 text-[14px] transition-colors"
           />
         </div>
 
-        {/* ACTUAL FILE UPLOAD */}
+        {/* DRAG & DROP FILE UPLOAD */}
         <div className="mb-6">
           <label className="text-[13px] font-semibold text-gray-500 mb-2 block">Upload Audio File</label>
-          <div className="flex items-center gap-3 flex-wrap">
+
+          <div
+            onDragOver={(e) => { e.preventDefault(); setDragActive(true); }}
+            onDragLeave={() => setDragActive(false)}
+            onDrop={handleDrop}
+            onClick={() => fileInputRef.current?.click()}
+            className={`max-w-[540px] rounded-2xl border-2 border-dashed cursor-pointer px-6 py-6 flex items-center gap-4 transition-all duration-300
+              ${dragActive ? "border-pink-400 bg-pink-50 scale-[1.01]" : "border-gray-300 bg-[#fafafa] hover:border-pink-300 hover:bg-pink-50/40"}`}
+          >
+            <div className="w-11 h-11 rounded-xl bg-pink-100 flex items-center justify-center shrink-0">
+              <UploadCloud size={20} className="text-pink-500" />
+            </div>
+            <div className="flex-1 min-w-0">
+              {audioFile ? (
+                <p className="text-[13px] text-gray-700 font-semibold flex items-center gap-1 truncate">
+                  <Music size={14} className="shrink-0" /> {audioFile.name}
+                </p>
+              ) : (
+                <>
+                  <p className="text-[13px] text-gray-600 font-medium">Click to browse or drag & drop audio here</p>
+                  <p className="text-[11px] text-gray-400 mt-0.5">MP3 or WAV files</p>
+                </>
+              )}
+            </div>
             <input
               type="file"
               ref={fileInputRef}
               accept="audio/*"
               onChange={handleFileSelect}
-              className="max-w-[400px] text-[13px] file:mr-3 file:py-2 file:px-4 file:rounded-full file:border-0 file:bg-pink-100 file:text-pink-600 file:font-semibold file:cursor-pointer"
+              className="hidden"
             />
-            {audioFile && (
-              <span className="text-[12px] text-gray-500 flex items-center gap-1">
-                <Music size={14} /> {audioFile.name}
-              </span>
-            )}
           </div>
         </div>
 
-        <div className="flex items-center gap-3 flex-wrap mb-8">
+        <div className="flex items-center gap-4 flex-wrap mb-8">
           <button
             onClick={handleUpload}
             disabled={audioUploading}
-            className="bg-gradient-to-r from-pink-400 to-pink-500 disabled:opacity-50 text-white px-6 py-3 rounded-full text-[16px] font-semibold hover:scale-105 duration-300 shadow-md flex items-center gap-2"
+            className="bg-gradient-to-r from-pink-400 to-pink-500 disabled:opacity-60 text-white px-6 py-3 rounded-full text-[16px] font-semibold hover:scale-105 duration-300 shadow-md flex items-center gap-2"
           >
-            <UploadCloud size={18} />
-            {audioUploading ? "Uploading..." : "Save Voice File"}
+            {audioUploading ? <Loader2 size={18} className="animate-spin" /> : <UploadCloud size={18} />}
+            {audioUploading ? `Uploading... ${uploadProgress}%` : "Save Voice File"}
           </button>
+
+          {/* PROGRESS BAR */}
+          {audioUploading && (
+            <div className="flex-1 min-w-[180px] max-w-[300px] h-[8px] bg-pink-100 rounded-full overflow-hidden">
+              <div
+                className="h-full bg-gradient-to-r from-pink-400 to-pink-500 rounded-full transition-all duration-200 ease-out"
+                style={{ width: `${uploadProgress}%` }}
+              />
+            </div>
+          )}
         </div>
 
         {/* VOICE FILES TABLE */}
