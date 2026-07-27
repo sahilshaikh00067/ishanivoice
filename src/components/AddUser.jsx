@@ -1,5 +1,5 @@
 import React, { useState } from "react";
-import { BASE } from "../components/api";   // 👈 ye line add karo
+import { BASE } from "../components/api";
 import {
   User,
   Lock,
@@ -9,6 +9,9 @@ import {
   MapPin,
   ShieldCheck,
   UserPlus,
+  AlertCircle,
+  CheckCircle2,
+  Loader2,
 } from "lucide-react";
 
 const AddUser = () => {
@@ -23,6 +26,15 @@ const AddUser = () => {
     role: "User",
   });
 
+  const [submitting, setSubmitting] = useState(false);
+
+  // ── PREMIUM POPUP (replaces alert()) ──
+  const [popup, setPopup] = useState(false);
+  const [popupType, setPopupType] = useState("success");
+  const [popupMsg, setPopupMsg] = useState("");
+
+  const showPopup = (t, m) => { setPopupType(t); setPopupMsg(m); setPopup(true); };
+
   const handleChange = (e) => {
     setForm({
       ...form,
@@ -34,9 +46,10 @@ const AddUser = () => {
     sessionStorage.getItem("user")
   );
 
-// ✅ SUBMIT
+  // ✅ SUBMIT
   const handleSubmit = async (e) => {
     e.preventDefault();
+    setSubmitting(true);
 
     try {
       const res = await fetch(`${BASE}/create-user/`, {
@@ -53,18 +66,20 @@ const AddUser = () => {
       });
 
       if (!res.ok) {
-        alert("Server Error ❌");
+        showPopup("error", "Server Error");
+        setSubmitting(false);
         return;
       }
 
       const data = await res.json();
 
       if (data.status !== "success") {
-        alert(data.message || "Error ❌");
+        showPopup("error", data.message || "Error");
+        setSubmitting(false);
         return;
       }
 
-      alert("User Added Successfully ✅");
+      showPopup("success", "User Added Successfully");
 
       // ✅ RESET
       setForm({
@@ -78,10 +93,11 @@ const AddUser = () => {
       });
     } catch (err) {
       console.log(err);
-      alert("Network Error ❌");
+      showPopup("error", "Network Error, please check your connection");
     }
+    setSubmitting(false);
   };
-  
+
   return (
 
     <div className="min-h-screen bg-[#f8f8f8] p-4 md:p-7">
@@ -333,10 +349,11 @@ const AddUser = () => {
 
               <button
                 type="submit"
-                className="h-[56px] px-10 rounded-2xl bg-[#EA7A9A] hover:bg-[#e3688b] duration-300 text-white text-[16px] font-semibold shadow-sm"
+                disabled={submitting}
+                className="h-[56px] px-10 rounded-2xl bg-[#EA7A9A] hover:bg-[#e3688b] duration-300 disabled:opacity-60 text-white text-[16px] font-semibold shadow-sm flex items-center gap-2"
               >
-
-                Add User
+                {submitting && <Loader2 size={18} className="animate-spin" />}
+                {submitting ? "Adding..." : "Add User"}
 
               </button>
 
@@ -347,6 +364,25 @@ const AddUser = () => {
         </div>
 
       </div>
+
+      {/* PREMIUM POPUP — replaces alert() */}
+      {popup && (
+        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4">
+          <div className="bg-white w-full max-w-[320px] rounded-3xl p-6 text-center shadow-2xl">
+            <div className="flex justify-center mb-4">
+              {popupType === "error"
+                ? <AlertCircle size={55} className="text-red-500" />
+                : <CheckCircle2 size={55} className="text-green-500" />}
+            </div>
+            <h2 className="text-[26px] font-bold mb-2">{popupType === "error" ? "Error" : "Success"}</h2>
+            <p className="text-[16px] text-gray-600">{popupMsg}</p>
+            <button
+              onClick={() => setPopup(false)}
+              className={`mt-5 px-6 py-2 rounded-full text-white text-[15px] font-semibold ${popupType === "error" ? "bg-red-500" : "bg-green-500"}`}
+            >OK</button>
+          </div>
+        </div>
+      )}
 
       {/* CSS */}
       <style>{`
