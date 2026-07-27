@@ -430,7 +430,7 @@ export default function AudioFile() {
             <p className="text-[15px] font-bold text-green-700 mb-1">Caller ID Setup</p>
             <p className="text-[13px] text-green-600 leading-6">
               Add caller IDs here as admin. These will show in the dropdown on the Campaign page.<br />
-              Example: <strong>+918071943020</strong>
+              Example: <strong>+918071390635</strong>
             </p>
           </div>
         </div>
@@ -446,7 +446,7 @@ export default function AudioFile() {
           <input
             type="text" value={callerNumber}
             onChange={(e) => setCallerNumber(e.target.value)}
-            placeholder="Number (e.g. +918071943020)"
+            placeholder="Number (e.g. +918071390635)"
             className="h-[50px] w-[260px] border border-gray-300 rounded-xl px-4 outline-none focus:border-green-400 text-[14px]"
           />
           <button

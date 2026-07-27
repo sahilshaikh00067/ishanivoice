@@ -30,7 +30,7 @@ from .models import (
 # =====================================
 OBD_API_URL    = "https://154.210.187.101/OBDAPI/webresources/CreateOBDCampaignPost"
 OBD_UKEY       = "rEfOPQTLgdO7uoa2Cl0WVZaeC"
-OBD_SERVICE_NO = "8071943020"
+OBD_SERVICE_NO = "8071390635"
 
 # Campaign auto-completes (pending -> done) somewhere between 5-10 minutes
 AUTO_COMPLETE_MIN_SECONDS = 300   # 5 min
