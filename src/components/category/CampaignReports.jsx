@@ -73,6 +73,7 @@ const CampaignReoprts = () => {
         name: r.name || `Campaign ${i + 1}`,
         totalCount: r.total || 0,
         process: r.success || 0,
+        noAnswer: r.no_answer || 0,
         pending: r.failed || 0,
         invalid: r.invalid || 0,
         jobId: r.job_id || "",
@@ -152,79 +153,66 @@ const CampaignReoprts = () => {
   // when disposition data is available, falls back to basic
   // call status list otherwise
   // ==============================
-  const downloadReport = () => {
-    if (!detailData) { alert("No data found"); return; }
+const downloadReport = () => {
 
-    const workbook = XLSX.utils.book_new();
-    const dispositions = detailData.dispositions || [];
+  if (!detailData) {
+    alert("No data found");
+    return;
+  }
 
-    if (dispositions.length > 0) {
-      // Real disposition sheet — same shape as the OBD export
-      const dispSheet = dispositions.map((d) => ({
-        PhoneNo: d.mobile,
-        Date: d.call_date,
-        "Call Dial Time": d.dial_time,
-        "Call Answered Time": d.answered_time,
-        "Call End Time": d.end_time,
-        "Call Duration(In Secs)": d.duration,
-        "Call Status": d.call_status,
-        "Call Flow": d.call_flow,
-        Disposition: d.disposition,
-        Retry: d.retry,
-        Pulse: d.pulse,
-        Cost: d.cost,
-        "DTMF Input": d.dtmf_input,
-      }));
-      XLSX.utils.book_append_sheet(
-        workbook,
-        XLSX.utils.json_to_sheet(dispSheet),
-        "Disposition Detail"
-      );
+  if (detailData.status === "pending") {
+    alert("Campaign is still pending. Report will be available after completion.");
+    return;
+  }
+
+  const results = detailData.results || [];
+
+  if (results.length === 0) {
+    alert("No report data found");
+    return;
+  }
+
+  const excelData = results.map((r) => ({
+    Number: r.number,
+    Status: r.status,
+  }));
+
+  const worksheet = XLSX.utils.json_to_sheet(excelData);
+
+  worksheet["!cols"] = [
+    { wch: 18 },
+    { wch: 18 },
+  ];
+
+  const workbook = XLSX.utils.book_new();
+
+  XLSX.utils.book_append_sheet(
+    workbook,
+    worksheet,
+    "Report"
+  );
+
+  const excelBuffer = XLSX.write(
+    workbook,
+    {
+      bookType: "xlsx",
+      type: "array",
     }
+  );
 
-    // Sheet: basic call status list (every number sent, from our own system)
-    const allResults = detailData.results || [];
-    if (allResults.length > 0) {
-      const statusData = allResults.map((r) => ({
-        Number: r.number,
-        Status: r.status,
-        JobId: r.job_id || "-",
-        Error: r.error || "-",
-      }));
-      XLSX.utils.book_append_sheet(
-        workbook,
-        XLSX.utils.json_to_sheet(statusData),
-        "Call Status"
-      );
+  const file = new Blob(
+    [excelBuffer],
+    {
+      type:
+        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
     }
+  );
 
-    // Sheet: IVR / DTMF responses (only numbers who pressed a key)
-    if (detailData.responses && detailData.responses.length > 0) {
-      const ivrData = detailData.responses.map((r) => ({
-        Number: r.mobile,
-        PressKey: r.dtmf,
-        CallResponse:
-          r.dtmf === "1" ? "Interested" :
-          r.dtmf === "2" ? "Call Back" :
-          r.dtmf === "3" ? "Not Interested" :
-          `Pressed ${r.dtmf}`,
-      }));
-      XLSX.utils.book_append_sheet(
-        workbook,
-        XLSX.utils.json_to_sheet(ivrData),
-        "IVR Responses"
-      );
-    }
-
-    if (workbook.SheetNames.length === 0) {
-      alert("No data found to export");
-      return;
-    }
-
-    const excelBuffer = XLSX.write(workbook, { bookType: "xlsx", type: "array" });
-    const file = new Blob([excelBuffer], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" });
-    saveAs(file, `${detailData.name}_report.xlsx`);
-  };
+  saveAs(
+    file,
+    `${detailData.name}_report.xlsx`
+  );
+};
 
   const filteredEntries = entries.filter((item) =>
     item.name.toLowerCase().includes(search.toLowerCase())
@@ -330,7 +318,7 @@ const CampaignReoprts = () => {
             <table className="w-full min-w-[900px]">
               <thead>
                 <tr className="bg-[#fafafa]">
-                  {["Date", "Name", "Caller ID", "Total", "Answered", "Failed", "Invalid", "Status", "Job ID", "View"].map((head, i) => (
+                  {["Date", "Name", "Caller ID", "Total", "Answered","No Answer", "Failed", "Invalid", "Status", "Job ID", "View"].map((head, i) => (
                     <th key={i} className="border-r border-b border-[#e6e6e6] px-3 py-4 text-left">
                       <div className="flex items-center gap-1 text-[13px] md:text-[15px] font-[700] text-black whitespace-nowrap">
                         {head}
@@ -342,18 +330,37 @@ const CampaignReoprts = () => {
               </thead>
               <tbody>
                 {loading ? (
-                  <tr><td colSpan="9" className="text-center py-10 text-[15px]">Loading...</td></tr>
+                  <tr><td colSpan="11" className="text-center py-10 text-[15px]">Loading...</td></tr>
                 ) : paginated.length === 0 ? (
-                  <tr><td colSpan="9" className="text-center py-10 text-[15px] text-black">No data available in table</td></tr>
+                  <tr><td colSpan="11" className="text-center py-10 text-[15px] text-black">No data available in table</td></tr>
                 ) : paginated.map((item, index) => (
                   <tr key={index} className="hover:bg-gray-50 duration-200">
                     <td className="px-3 py-4 border-b border-[#ececec] text-[13px]">{item.date}</td>
                     <td className="px-3 py-4 border-b border-[#ececec] text-[13px]">{item.name}</td>
                     <td className="px-3 py-4 border-b border-[#ececec] text-[13px]">{item.callerId || "-"}</td>
-                    <td className="px-3 py-4 border-b border-[#ececec] text-[13px]">{item.totalCount}</td>
-                    <td className="px-3 py-4 border-b border-[#ececec] text-[13px] text-green-600 font-semibold">{item.process}</td>
-                    <td className="px-3 py-4 border-b border-[#ececec] text-[13px] text-red-500 font-semibold">{item.pending}</td>
-                    <td className="px-3 py-4 border-b border-[#ececec] text-[13px] text-orange-500 font-semibold">{item.invalid}</td>
+<td className="px-3 py-4 border-b border-[#ececec] text-[13px]">
+  {item.totalCount}
+</td>
+
+{/* Answered */}
+<td className="px-3 py-4 border-b border-[#ececec] text-[13px] text-green-600 font-semibold">
+  {item.process}
+</td>
+
+{/* No Answer */}
+<td className="px-3 py-4 border-b border-[#ececec] text-[13px] text-blue-500 font-semibold">
+  {item.noAnswer}
+</td>
+
+{/* Failed */}
+<td className="px-3 py-4 border-b border-[#ececec] text-[13px] text-red-500 font-semibold">
+  {item.pending}
+</td>
+
+{/* Invalid */}
+<td className="px-3 py-4 border-b border-[#ececec] text-[13px] text-orange-500 font-semibold">
+  {item.invalid}
+</td>
                     <td className="px-3 py-4 border-b border-[#ececec] text-[13px]">{item.status}</td>
                     <td className="px-3 py-4 border-b border-[#ececec] text-[13px]">{item.jobId || "-"}</td>
                     <td className="px-3 py-4 border-b border-[#ececec]">
@@ -373,7 +380,7 @@ const CampaignReoprts = () => {
 
           {/* FOOTER */}
           <div className="flex items-center justify-between flex-wrap gap-4 mt-6">
-            <div className="text-[13px] md:text-[15px] text-black">
+                        <div className="text-[13px] md:text-[15px] text-black">
               Showing {filteredEntries.length === 0 ? 0 : (page - 1) * showEntries + 1} to{" "}
               {Math.min(page * showEntries, filteredEntries.length)} of {filteredEntries.length} entries
             </div>
@@ -427,6 +434,7 @@ const CampaignReoprts = () => {
                 {[
                   ["Total", detailData.total],
                   ["Answered", detailData.success],
+                  ["No Answer", detailData.no_answer],
                   ["Failed", detailData.failed],
                   ["Invalid", detailData.invalid],
                   ["Caller ID", detailData.caller_id],
@@ -512,7 +520,7 @@ const CampaignReoprts = () => {
                           <th className="px-4 py-3 text-left border-b">Response</th>
                         </tr>
                       </thead>
-                      <tbody>
+                     <tbody>
                         {detailData.responses.map((r, i) => (
                           <tr key={i} className="border-b">
                             <td className="px-4 py-2">{r.mobile}</td>

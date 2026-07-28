@@ -49,6 +49,7 @@ export default function Dashboard() {
   const [answered, setAnswered] = useState(0);
   const [failed, setFailed] = useState(0);
   const [invalid, setInvalid] = useState(0);
+  const [noAnswer, setNoAnswer] = useState(0);
   const [pct, setPct] = useState(0);
   const [pending, setPending] = useState(0);
   const [recent, setRecent] = useState([]);
@@ -104,18 +105,21 @@ export default function Dashboard() {
   useEffect(() => {
     const filtered = filterCampaigns(allCampaigns);
 
-    let t = 0, a = 0, f = 0, inv = 0;
+    let t = 0, a = 0, na = 0, f = 0, inv = 0;
+
     filtered.forEach((r) => {
       t += r.total || 0;
       a += r.success || 0;
+      na += r.no_answer || 0;
       f += r.failed || 0;
       inv += r.invalid || 0;
     });
 
-    const pend = Math.max(0, t - a - f - inv);
+    const pend = Math.max(0, t - a - na - f - inv);
 
     setTotal(t);
     setAnswered(a);
+    setNoAnswer(na);
     setFailed(f);
     setInvalid(inv);
     setPending(pend);
@@ -136,11 +140,21 @@ export default function Dashboard() {
   // DONUT DATA
   // ==============================
   const donutData = {
-    labels: ["Answered", "Failed", "Invalid", "Pending"],
+    labels: ["Answered", "No Answer", "Invalid", "Failed"],
     datasets: [
       {
-        data: [answered || 0.01, failed || 0.01, invalid || 0.01, pending || 0.01],
-        backgroundColor: ["#EA7A9A", "#f87171", "#fbbf24", "#e5e7eb"],
+        data: [
+          answered || 0.01,
+          noAnswer || 0.01,
+          invalid || 0.01,
+          failed || 0.01,
+        ],
+        backgroundColor: [
+          "#EA7A9A",
+          "#60a5fa",
+          "#fbbf24",
+          "#f87171",
+        ],
         borderWidth: 0,
         hoverOffset: 6,
         borderRadius: 6,
@@ -188,6 +202,18 @@ export default function Dashboard() {
       barColor: "bg-gradient-to-r from-green-400 to-green-300",
       barW: total > 0 ? `${Math.round((answered / total) * 100)}%` : "0%",
       badge: "+8%", badgeBg: "bg-green-50 text-green-600", trend: "up",
+    },
+    {
+      label: "No Answer",
+      value: noAnswer,
+      Icon: FiPhoneCall,
+      iconColor: "text-blue-500",
+      iconBg: "from-blue-50 to-white border-blue-100",
+      barColor: "bg-gradient-to-r from-blue-400 to-blue-300",
+      barW: total > 0 ? `${Math.round((noAnswer / total) * 100)}%` : "0%",
+      badge: "25%",
+      badgeBg: "bg-blue-50 text-blue-600",
+      trend: "flat",
     },
     {
       label: "Failed", value: failed,
@@ -254,7 +280,7 @@ export default function Dashboard() {
         </div>
 
         {/* METRIC CARDS */}
-        <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+        <div className="grid grid-cols-2 lg:grid-cols-5 gap-4">
           {metrics.map((m) => (
             <div
               key={m.label}
@@ -326,9 +352,9 @@ export default function Dashboard() {
             <div className="flex flex-wrap gap-2 mt-5">
               {[
                 { label: "Answered", val: answered, color: "#EA7A9A" },
-                { label: "Failed", val: failed, color: "#f87171" },
+                { label: "No Answer", val: noAnswer, color: "#60a5fa" },
                 { label: "Invalid", val: invalid, color: "#fbbf24" },
-                { label: "Pending", val: pending, color: "#d1d5db" },
+                { label: "Failed", val: failed, color: "#f87171" },
               ].map((l) => (
                 <div
                   key={l.label}
@@ -406,7 +432,17 @@ export default function Dashboard() {
             <table className="w-full border-separate border-spacing-0">
               <thead>
                 <tr>
-                  {["Campaign", "Total", "Answered", "Failed", "Voice File", "Status", "Date"].map((h) => (
+                  {[
+                    "Campaign",
+                    "Total",
+                    "Answered",
+                    "No Answer",
+                    "Invalid",
+                    "Failed",
+                    "Voice File",
+                    "Status",
+                    "Date"
+                  ].map((h) => (
                     <th
                       key={h}
                       className="text-left text-[10.5px] text-gray-400 font-semibold uppercase tracking-wider pb-3 pr-4 whitespace-nowrap border-b border-gray-100"
@@ -419,7 +455,7 @@ export default function Dashboard() {
               <tbody>
                 {recent.length === 0 ? (
                   <tr>
-                    <td colSpan={7} className="text-center text-[12px] text-gray-400 py-10">
+                    <td colSpan={9} className="text-center text-[12px] text-gray-400 py-10">
                       No campaigns found
                     </td>
                   </tr>
@@ -447,9 +483,30 @@ export default function Dashboard() {
                             </span>
                           </div>
                         </td>
-                        <td className="py-3.5 pr-4 text-[12.5px] text-gray-600 tabular-nums border-b border-gray-50 group-hover:bg-gray-50/60 transition-colors">{c.total || 0}</td>
-                        <td className="py-3.5 pr-4 text-[12.5px] text-green-600 font-semibold tabular-nums border-b border-gray-50 group-hover:bg-gray-50/60 transition-colors">{c.success || 0}</td>
-                        <td className="py-3.5 pr-4 text-[12.5px] text-red-500 font-semibold tabular-nums border-b border-gray-50 group-hover:bg-gray-50/60 transition-colors">{c.failed || 0}</td>
+                        {/* TOTAL */}
+                        <td className="py-3.5 pr-4 text-[12.5px] text-gray-600 tabular-nums border-b border-gray-50 group-hover:bg-gray-50/60 transition-colors">
+                          {c.total || 0}
+                        </td>
+
+                        {/* ANSWERED */}
+                        <td className="py-3.5 pr-4 text-[12.5px] text-green-600 font-semibold tabular-nums border-b border-gray-50 group-hover:bg-gray-50/60 transition-colors">
+                          {c.success || 0}
+                        </td>
+
+                        {/* NO ANSWER */}
+                        <td className="py-3.5 pr-4 text-[12.5px] text-blue-500 font-semibold tabular-nums border-b border-gray-50 group-hover:bg-gray-50/60 transition-colors">
+                          {c.no_answer || 0}
+                        </td>
+
+                        {/* INVALID */}
+                        <td className="py-3.5 pr-4 text-[12.5px] text-yellow-500 font-semibold tabular-nums border-b border-gray-50 group-hover:bg-gray-50/60 transition-colors">
+                          {c.invalid || 0}
+                        </td>
+
+                        {/* FAILED */}
+                        <td className="py-3.5 pr-4 text-[12.5px] text-red-500 font-semibold tabular-nums border-b border-gray-50 group-hover:bg-gray-50/60 transition-colors">
+                          {c.failed || 0}
+                        </td>
                         <td className="py-3.5 pr-4 text-[11.5px] text-gray-400 border-b border-gray-50 group-hover:bg-gray-50/60 transition-colors">{vf}</td>
                         <td className="py-3.5 pr-4 border-b border-gray-50 group-hover:bg-gray-50/60 transition-colors">
                           <span className={`inline-flex items-center gap-1.5 text-[10px] px-2.5 py-1 rounded-full font-semibold ${sc}`}>
@@ -471,5 +528,4 @@ export default function Dashboard() {
     </div>
   );
 }
-
 

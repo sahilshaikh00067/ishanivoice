@@ -200,22 +200,46 @@ export default function VoiceCampaign() {
         }),
       });
       const data = await res.json();
-      if (data.status === "done") {
-        showPopup(
-          "success",
-          "Campaign Sent! 🚀",
-          "Your voice campaign has been dispatched successfully.",
-          [
-            ["Total", data.total],
-            ["Success", data.success],
-            ["Failed", data.failed],
-            ["Invalid", data.invalid],
-          ]
-        );
-        setNumbers(""); setSelectedMediaId("");
-      } else {
-        showPopup("error", "Error", data.message || "Something went wrong");
-      }
+if (data.status === "done") {
+
+  showPopup(
+    "success",
+    "Campaign Sent! 🚀",
+    "Your voice campaign has been dispatched successfully.",
+    [
+      ["Total", data.total],
+      ["Success", data.success],
+      ["Failed", data.failed],
+      ["Invalid", data.invalid],
+    ]
+  );
+
+  setNumbers("");
+  setSelectedMediaId("");
+
+} else if (data.status === "pending") {
+
+  showPopup(
+    "success",
+    "Campaign Pending ⏳",
+    "Large campaign received successfully. It will complete in approximately 8-10 minutes.",
+    [
+      ["Total Numbers", data.total],
+      ["Status", "Pending"],
+    ]
+  );
+
+  setNumbers("");
+  setSelectedMediaId("");
+
+} else {
+
+  showPopup(
+    "error",
+    "Error",
+    data.message || "Something went wrong"
+  );
+}
     } catch {
       showPopup("error", "Network Error", "Please check your connection and try again");
     }

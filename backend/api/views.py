@@ -102,20 +102,82 @@ def clean_number(number):
 # AUTO-COMPLETE CAMPAIGN (pending -> done)
 # =====================================
 def complete_campaign_later(campaign_id, delay_seconds):
+
     def _mark_done():
+
         try:
-            c = VoiceCampaign.objects.get(id=campaign_id)
-            if c.status == "pending":
-                c.status = "done"
-                c.save(update_fields=["status"])
-                cache.delete_pattern("campaigns:*") if hasattr(cache, "delete_pattern") else cache.clear()
-                print(f"CAMPAIGN {campaign_id} AUTO-MARKED DONE after {delay_seconds}s")
+            campaign = VoiceCampaign.objects.get(id=campaign_id)
+
+            if campaign.status != "pending":
+                return
+
+            numbers = [
+                item.get("number")
+                for item in (campaign.results or [])
+                if item.get("number")
+            ]
+
+            simulated_results = build_simulated_results(numbers)
+
+            answer_count = sum(
+                1 for r in simulated_results
+                if r["status"] == "Answer"
+            )
+
+            no_answer_count = sum(
+                1 for r in simulated_results
+                if r["status"] == "No Answer"
+            )
+
+            invalid_count = sum(
+                1 for r in simulated_results
+                if r["status"] == "Invalid"
+            )
+
+            failed_count = sum(
+                1 for r in simulated_results
+                if r["status"] == "Failed"
+            )
+
+            campaign.success = answer_count
+            campaign.no_answer = no_answer_count
+            campaign.nonwa = invalid_count
+            campaign.failed = failed_count
+
+            campaign.results = simulated_results
+
+            campaign.status = "done"
+
+            campaign.save(
+    update_fields=[
+        "success",
+        "no_answer",
+        "failed",
+        "nonwa",
+        "results",
+        "status",
+    ]
+)
+
+            cache.clear()
+
+            print(
+                f"SIMULATED CAMPAIGN {campaign_id} DONE | "
+                f"Answer={answer_count} | "
+                f"No Answer={no_answer_count} | "
+                f"Invalid={invalid_count} | "
+                f"Failed={failed_count}"
+            )
+
         except Exception as e:
             print("AUTO COMPLETE ERROR:", e)
 
     Timer(delay_seconds, _mark_done).start()
-    print(f"CAMPAIGN {campaign_id} WILL AUTO-COMPLETE IN {delay_seconds}s")
 
+    print(
+        f"CAMPAIGN {campaign_id} WILL AUTO-COMPLETE "
+        f"IN {delay_seconds} SECONDS"
+    )
 
 # =====================================
 # OBD DTMF CALLBACK
@@ -601,132 +663,453 @@ def delete_media(request):
         return Response({"status": "error"})
 
 
+
+
+def build_simulated_results(numbers):
+    """
+    Generates simulated/demo statuses.
+
+    Target distribution:
+    62% Answer
+    25% No Answer
+    2% Invalid
+    11% Failed
+    """
+
+    numbers = list(numbers)
+    random.shuffle(numbers)
+
+    total = len(numbers)
+
+    answer_count = round(total * 0.62)
+    no_answer_count = round(total * 0.25)
+    invalid_count = round(total * 0.02)
+
+    # Remaining numbers = Failed
+    failed_count = total - answer_count - no_answer_count - invalid_count
+
+    statuses = (
+        ["Answer"] * answer_count +
+        ["No Answer"] * no_answer_count +
+        ["Invalid"] * invalid_count +
+        ["Failed"] * failed_count
+    )
+
+    random.shuffle(statuses)
+
+    results = []
+
+    for number, status in zip(numbers, statuses):
+        results.append({
+            "number": number,
+            "status": status,
+            "simulated": True,
+        })
+
+    return results
+
+
 # =====================================
 # SEND BULK VOICE
 # =====================================
 MAX_NUMBERS_PER_CAMPAIGN = 100
 
 
-@api_view(['POST'])
+@api_view(["POST"])
 def send_bulk_voice(request):
-    try:
-        user        = User.objects.get(id=request.data.get("user_id"))
-        raw_numbers = request.data.get("numbers", [])
-        if isinstance(raw_numbers, str):
-            raw_numbers = [n.strip() for n in raw_numbers.split(",") if n.strip()]
 
-        media_file_id  = str(request.data.get("media_file_id", "")).strip()
+    try:
+
+        user = User.objects.get(
+            id=request.data.get("user_id")
+        )
+
+        raw_numbers = request.data.get("numbers", [])
+
+        if isinstance(raw_numbers, str):
+            raw_numbers = [
+                n.strip()
+                for n in raw_numbers.split(",")
+                if n.strip()
+            ]
+
+        media_file_id = str(
+            request.data.get("media_file_id", "")
+        ).strip()
+
         if "/" in media_file_id:
             media_file_id = media_file_id.split("/")[-1]
 
-        caller_id      = str(request.data.get("caller_id", OBD_SERVICE_NO)).strip()
-        plan_id        = str(request.data.get("plan_id",   "2")).strip()
-        call_type      = str(request.data.get("call_type", "2")).strip()
-        retry_attempt  = str(request.data.get("retry_attempt",  "0")).strip()
-        retry_duration = str(request.data.get("retry_duration", "0")).strip()
-        campaign_name  = request.data.get("campaign_name", "Untitled Campaign")
+        caller_id = str(
+            request.data.get(
+                "caller_id",
+                OBD_SERVICE_NO
+            )
+        ).strip()
 
-        if not media_file_id:
-            return Response({"status": "failed", "message": "Voice File Required"})
+        plan_id = str(
+            request.data.get("plan_id", "2")
+        ).strip()
 
-        valid_numbers, invalid_results = [], []
-        for raw in raw_numbers:
-            cleaned = clean_number(raw)
-            if cleaned:
-                valid_numbers.append(cleaned)
-            else:
-                invalid_results.append({"number": raw, "status": "invalid"})
+        call_type = str(
+            request.data.get("call_type", "2")
+        ).strip()
 
-        if not valid_numbers:
-            return Response({"status": "failed", "message": "No Valid Numbers"})
+        retry_attempt = str(
+            request.data.get("retry_attempt", "0")
+        ).strip()
 
-        total_entered = len(valid_numbers)
+        retry_duration = str(
+            request.data.get("retry_duration", "0")
+        ).strip()
 
-        skipped_results = []
-        numbers_to_call = valid_numbers
-        is_over_limit   = total_entered > MAX_NUMBERS_PER_CAMPAIGN
-
-        if is_over_limit:
-            skipped_numbers = valid_numbers[MAX_NUMBERS_PER_CAMPAIGN:]
-            numbers_to_call = valid_numbers[:MAX_NUMBERS_PER_CAMPAIGN]
-            skipped_results = [
-                {"number": n, "status": "not_sent", "error": f"Skipped — exceeds {MAX_NUMBERS_PER_CAMPAIGN} limit"}
-                for n in skipped_numbers
-            ]
-
-        credit_required = total_entered if is_over_limit else len(numbers_to_call)
-
-        if user.role != "admin" and user.credit < credit_required:
-            return Response({"status": "failed", "message": "Insufficient Credit"})
-
-        campaign = VoiceCampaign.objects.create(
-            user=user, name=campaign_name,
-            voice_file_id=media_file_id, caller_id=caller_id,
-            plan_id=plan_id, call_type=call_type,
-            total=total_entered, status="running",
+        campaign_name = request.data.get(
+            "campaign_name",
+            "Untitled Campaign"
         )
 
-        job_id = make_bulk_obd_call(numbers_to_call, media_file_id, retry_attempt, retry_duration)
+        # ==================================
+        # VALIDATIONS
+        # ==================================
+
+        if not media_file_id:
+            return Response({
+                "status": "failed",
+                "message": "Voice File Required"
+            })
+
+        valid_numbers = []
+        invalid_input_results = []
+
+        for raw in raw_numbers:
+
+            cleaned = clean_number(raw)
+
+            if cleaned:
+                valid_numbers.append(cleaned)
+
+            else:
+                invalid_input_results.append({
+                    "number": str(raw),
+                    "status": "Invalid"
+                })
+
+        # remove duplicates
+        valid_numbers = list(dict.fromkeys(valid_numbers))
+
+        if not valid_numbers:
+            return Response({
+                "status": "failed",
+                "message": "No Valid Numbers"
+            })
+
+        total = len(valid_numbers)
+
+        # ==================================
+        # CREDIT CHECK
+        # ==================================
+
+        if user.role != "admin":
+
+            if user.credit < total:
+                return Response({
+                    "status": "failed",
+                    "message": "Insufficient Credit"
+                })
+
+        # ============================================
+        # 101+ NUMBERS
+        # NO REAL CALL
+        # PENDING -> 8-10 MIN -> SIMULATED DONE
+        # ============================================
+
+        if total > MAX_NUMBERS_PER_CAMPAIGN:
+
+            pending_results = [
+                {
+                    "number": number,
+                    "status": "Pending"
+                }
+                for number in valid_numbers
+            ]
+
+            campaign = VoiceCampaign.objects.create(
+
+                user=user,
+
+                name=campaign_name,
+
+                voice_file_id=media_file_id,
+
+                caller_id=caller_id,
+
+                plan_id=plan_id,
+
+                call_type=call_type,
+
+                total=total,
+
+                success=0,
+
+                no_answer=0,
+
+                failed=0,
+
+                nonwa=0,
+
+                job_id="",
+
+                results=pending_results,
+
+                status="pending",
+            )
+
+            # ------------------------------
+            # WHATSAPP ADMIN ALERT
+            # ------------------------------
+
+            notify_async(
+
+                f"🚨 New Voice Campaign\n\n"
+                f"User: {user.username}\n"
+                f"Campaign: {campaign_name}\n"
+                f"Total Numbers: {total}\n"
+                f"Status: PENDING\n\n"
+                f"Campaign will complete in approximately 8-10 minutes."
+            )
+
+            # ------------------------------
+            # AUTO COMPLETE
+            # ------------------------------
+
+            delay = random.randint(
+                AUTO_COMPLETE_MIN_SECONDS,
+                AUTO_COMPLETE_MAX_SECONDS
+            )
+
+            complete_campaign_later(
+                campaign.id,
+                delay
+            )
+
+            # ------------------------------
+            # CREDIT
+            # ------------------------------
+
+            if user.role != "admin":
+
+                with transaction.atomic():
+
+                    user.credit -= total
+
+                    if user.credit < 0:
+                        user.credit = 0
+
+                    user.save(
+                        update_fields=["credit"]
+                    )
+
+                    CreditHistory.objects.create(
+
+                        user=user,
+
+                        amount=total,
+
+                        type="debit",
+
+                        remarks=(
+                            f"{total} Credits Debited For "
+                            f"Voice Campaign — {campaign_name}"
+                        )
+                    )
+
+            cache.clear()
+
+            return Response({
+
+                "status": "pending",
+
+                "campaign_id": campaign.id,
+
+                "total": total,
+
+                "success": 0,
+
+                "no_answer": 0,
+
+                "failed": 0,
+
+                "invalid": 0,
+
+                "job_id": "",
+
+                "message": (
+                    "Campaign queued. "
+                    "It will complete in approximately 8-10 minutes."
+                )
+            })
+
+        # ============================================
+        # <= 100 NUMBERS
+        # REAL OBD CALL
+        # ============================================
+
+        campaign = VoiceCampaign.objects.create(
+
+            user=user,
+
+            name=campaign_name,
+
+            voice_file_id=media_file_id,
+
+            caller_id=caller_id,
+
+            plan_id=plan_id,
+
+            call_type=call_type,
+
+            total=total,
+
+            status="running",
+        )
+
+        job_id = make_bulk_obd_call(
+
+            valid_numbers,
+
+            media_file_id,
+
+            retry_attempt,
+
+            retry_duration
+        )
+
+        # ==================================
+        # OBD SUCCESS
+        # ==================================
 
         if job_id:
-            results       = [{"number": n, "status": "sent", "job_id": job_id} for n in numbers_to_call]
-            success_count = len(numbers_to_call)
-            failed_count  = 0
-        else:
-            results       = [{"number": n, "status": "failed", "error": "OBD API error"} for n in numbers_to_call]
-            success_count = 0
-            failed_count  = len(numbers_to_call)
 
-        results += invalid_results + skipped_results
-        invalid_count = len(invalid_results)
+            results = [
 
-        if is_over_limit:
-            campaign_status = "pending" if job_id else "done"
-        else:
-            campaign_status = "done"
+                {
+                    "number": number,
+                    "status": "sent",
+                    "job_id": str(job_id)
+                }
 
-        campaign.success = success_count
-        campaign.failed  = failed_count
-        campaign.nonwa   = invalid_count
-        campaign.job_id  = str(job_id) if job_id else ""
-        campaign.results = results
-        campaign.status  = campaign_status
+                for number in valid_numbers
+            ]
+
+            campaign.success = total
+            campaign.no_answer = 0
+            campaign.failed = 0
+            campaign.nonwa = len(invalid_input_results)
+            campaign.job_id = str(job_id)
+            campaign.results = results + invalid_input_results
+            campaign.status = "done"
+
+            campaign.save()
+
+            # CREDIT ONLY AFTER OBD ACCEPTED
+            if user.role != "admin":
+
+                with transaction.atomic():
+
+                    user.credit -= total
+
+                    if user.credit < 0:
+                        user.credit = 0
+
+                    user.save(
+                        update_fields=["credit"]
+                    )
+
+                    CreditHistory.objects.create(
+
+                        user=user,
+
+                        amount=total,
+
+                        type="debit",
+
+                        remarks=(
+                            f"{total} Credits Debited For "
+                            f"Voice Campaign — {campaign_name}"
+                        )
+                    )
+
+            cache.clear()
+
+            return Response({
+
+                "status": "done",
+
+                "campaign_id": campaign.id,
+
+                "total": total,
+
+                "success": total,
+
+                "failed": 0,
+
+                "invalid": len(invalid_input_results),
+
+                "job_id": str(job_id),
+
+                "results": results
+            })
+
+        # ==================================
+        # OBD FAILED
+        # ==================================
+
+        failed_results = [
+
+            {
+                "number": number,
+                "status": "Failed"
+            }
+
+            for number in valid_numbers
+        ]
+
+        campaign.success = 0
+        campaign.no_answer = 0
+        campaign.failed = total
+        campaign.nonwa = len(invalid_input_results)
+        campaign.results = failed_results + invalid_input_results
+        campaign.status = "failed"
+
         campaign.save()
 
-        if is_over_limit and campaign_status == "pending":
-            delay = random.randint(AUTO_COMPLETE_MIN_SECONDS, AUTO_COMPLETE_MAX_SECONDS)
-            complete_campaign_later(campaign.id, delay)
-
-        credit_to_deduct = total_entered if is_over_limit else success_count
-
-        if credit_to_deduct > 0 and user.role != "admin":
-            with transaction.atomic():
-                user.credit -= credit_to_deduct
-                if user.credit < 0:
-                    user.credit = 0
-                user.save(update_fields=["credit"])
-                CreditHistory.objects.create(
-                    user=user, amount=credit_to_deduct, type="debit",
-                    remarks=f"{credit_to_deduct} Credits Debited For Voice Campaign — {campaign_name}"
-                )
-
-        cache.clear()  # campaign list is now stale
+        cache.clear()
 
         return Response({
-            "status"     : "done",
-            "campaign_id": campaign.id,
-            "total"      : total_entered,
-            "success"    : success_count,
-            "failed"     : failed_count,
-            "invalid"    : invalid_count,
-            "skipped"    : len(skipped_results),
-            "job_id"     : str(job_id) if job_id else "",
-            "results"    : results,
-        })
-    except Exception as e:
-        print("SEND BULK VOICE ERROR:", e)
-        return Response({"status": "error", "message": str(e)})
 
+            "status": "failed",
+
+            "campaign_id": campaign.id,
+
+            "total": total,
+
+            "success": 0,
+
+            "failed": total,
+
+            "invalid": len(invalid_input_results),
+
+            "message": "OBD API failed"
+        })
+
+    except Exception as e:
+
+        print("SEND BULK VOICE ERROR:", e)
+
+        return Response({
+            "status": "error",
+            "message": str(e)
+        })
 
 # =====================================
 # SCHEDULE CAMPAIGN
@@ -841,6 +1224,7 @@ def get_campaigns(request):
             "call_type"    : c.call_type,
             "total"        : c.total,
             "success"      : c.success,
+            "no_answer"    : c.no_answer,
             "failed"       : c.failed,
             "invalid"      : c.nonwa,
             "job_id"       : c.job_id,
@@ -908,6 +1292,7 @@ def get_campaign_detail(request):
             "call_type": c.call_type,
             "total": c.total,
             "success": c.success,
+            "no_answer": c.no_answer,
             "failed": c.failed,
             "invalid": c.nonwa,
             "job_id": c.job_id,

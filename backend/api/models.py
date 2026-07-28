@@ -98,10 +98,11 @@ class VoiceCampaign(models.Model):
     plan_id       = models.CharField(max_length=10,  default="2")
     call_type     = models.CharField(max_length=10,  default="2")
 
-    total   = models.IntegerField(default=0)
-    success = models.IntegerField(default=0)
-    failed  = models.IntegerField(default=0)
-    nonwa   = models.IntegerField(default=0)
+    total     = models.IntegerField(default=0)
+    success   = models.IntegerField(default=0)  # Answered
+    no_answer = models.IntegerField(default=0)  # No Answer
+    failed    = models.IntegerField(default=0)  # Failed
+    nonwa     = models.IntegerField(default=0)  # Invalid
 
     job_id  = models.CharField(max_length=100, blank=True)
     results = models.JSONField(default=list)
