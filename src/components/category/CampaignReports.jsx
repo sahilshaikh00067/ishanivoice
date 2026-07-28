@@ -500,8 +500,7 @@ const downloadReport = () => {
                 </div>
               ) : (
                 <div className="mt-6 bg-yellow-50 border border-yellow-300 text-yellow-700 rounded-xl px-4 py-3 text-[13px]">
-                  Your Report Is Pending.
-                  {canUpload ? " Wait For Few Minutes." : ""}
+                  {canUpload ? "" : ""}
                 </div>
               )}
 

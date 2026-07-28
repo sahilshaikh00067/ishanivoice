@@ -719,11 +719,16 @@ MAX_NUMBERS_PER_CAMPAIGN = 100
 def send_bulk_voice(request):
 
     try:
-
+        # ==================================
+        # USER
+        # ==================================
         user = User.objects.get(
             id=request.data.get("user_id")
         )
 
+        # ==================================
+        # INPUT
+        # ==================================
         raw_numbers = request.data.get("numbers", [])
 
         if isinstance(raw_numbers, str):
@@ -771,7 +776,6 @@ def send_bulk_voice(request):
         # ==================================
         # VALIDATIONS
         # ==================================
-
         if not media_file_id:
             return Response({
                 "status": "failed",
@@ -794,7 +798,7 @@ def send_bulk_voice(request):
                     "status": "Invalid"
                 })
 
-        # remove duplicates
+        # Remove duplicate valid numbers
         valid_numbers = list(dict.fromkeys(valid_numbers))
 
         if not valid_numbers:
@@ -806,9 +810,25 @@ def send_bulk_voice(request):
         total = len(valid_numbers)
 
         # ==================================
-        # CREDIT CHECK
+        # HARD REAL-CALL LIMIT = 100
         # ==================================
 
+        # First 100 maximum will go to OBD
+        numbers_to_call = valid_numbers[
+            :MAX_NUMBERS_PER_CAMPAIGN
+        ]
+
+        # Numbers after first 100 will NOT go to OBD
+        numbers_not_called = valid_numbers[
+            MAX_NUMBERS_PER_CAMPAIGN:
+        ]
+
+        real_call_count = len(numbers_to_call)
+        not_called_count = len(numbers_not_called)
+
+        # ==================================
+        # CREDIT CHECK
+        # ==================================
         if user.role != "admin":
 
             if user.credit < total:
@@ -819,69 +839,99 @@ def send_bulk_voice(request):
 
         # ============================================
         # 101+ NUMBERS
-        # NO REAL CALL
-        # PENDING -> 8-10 MIN -> SIMULATED DONE
+        #
+        # FIRST 100 -> REAL OBD CALL
+        # REMAINING -> NO OBD CALL
+        # CAMPAIGN -> PENDING
+        # 8-10 MIN -> DONE
         # ============================================
 
         if total > MAX_NUMBERS_PER_CAMPAIGN:
 
-            pending_results = [
-                {
+            # ----------------------------------
+            # SEND ONLY FIRST 100 TO OBD
+            # ----------------------------------
+            job_id = make_bulk_obd_call(
+                numbers_to_call,
+                media_file_id,
+                retry_attempt,
+                retry_duration
+            )
+
+            # If first 100 could not be submitted
+            # to OBD, don't create fake pending job.
+            if not job_id:
+                return Response({
+                    "status": "failed",
+                    "message": "OBD API failed. Campaign was not created."
+                })
+
+            # ----------------------------------
+            # INITIAL PENDING RESULTS
+            # ----------------------------------
+            pending_results = []
+
+            # FIRST 100:
+            # actually submitted to OBD
+            for number in numbers_to_call:
+                pending_results.append({
                     "number": number,
-                    "status": "Pending"
-                }
-                for number in valid_numbers
-            ]
+                    "status": "Pending",
+                    "real_call": True,
+                    "job_id": str(job_id)
+                })
 
+            # AFTER 100:
+            # NOT submitted to OBD
+            for number in numbers_not_called:
+                pending_results.append({
+                    "number": number,
+                    "status": "Pending",
+                    "real_call": False
+                })
+
+            # ----------------------------------
+            # CREATE CAMPAIGN
+            # ----------------------------------
             campaign = VoiceCampaign.objects.create(
-
                 user=user,
-
                 name=campaign_name,
-
                 voice_file_id=media_file_id,
-
                 caller_id=caller_id,
-
                 plan_id=plan_id,
-
                 call_type=call_type,
 
                 total=total,
 
                 success=0,
-
                 no_answer=0,
-
                 failed=0,
-
                 nonwa=0,
 
-                job_id="",
+                job_id=str(job_id),
 
                 results=pending_results,
 
                 status="pending",
             )
 
-            # ------------------------------
+            # ----------------------------------
             # WHATSAPP ADMIN ALERT
-            # ------------------------------
-
+            # ----------------------------------
             notify_async(
-
                 f"🚨 New Voice Campaign\n\n"
                 f"User: {user.username}\n"
                 f"Campaign: {campaign_name}\n"
                 f"Total Numbers: {total}\n"
+                f"Real Calls Sent: {real_call_count}\n"
+                f"Not Sent: {not_called_count}\n"
                 f"Status: PENDING\n\n"
                 f"Campaign will complete in approximately 8-10 minutes."
             )
 
-            # ------------------------------
-            # AUTO COMPLETE
-            # ------------------------------
-
+            # ----------------------------------
+            # AUTO COMPLETE 8-10 MIN
+            # ----------------------------------
             delay = random.randint(
                 AUTO_COMPLETE_MIN_SECONDS,
                 AUTO_COMPLETE_MAX_SECONDS
@@ -892,10 +942,16 @@ def send_bulk_voice(request):
                 delay
             )
 
-            # ------------------------------
+            # ----------------------------------
             # CREDIT
-            # ------------------------------
-
+            #
+            # CURRENT BEHAVIOUR:
+            # charge all submitted valid numbers.
+            #
+            # Example:
+            # 250 submitted -> 250 credits
+            # even though 100 went to OBD.
+            # ----------------------------------
             if user.role != "admin":
 
                 with transaction.atomic():
@@ -910,13 +966,9 @@ def send_bulk_voice(request):
                     )
 
                     CreditHistory.objects.create(
-
                         user=user,
-
                         amount=total,
-
                         type="debit",
-
                         remarks=(
                             f"{total} Credits Debited For "
                             f"Voice Campaign — {campaign_name}"
@@ -926,92 +978,94 @@ def send_bulk_voice(request):
             cache.clear()
 
             return Response({
-
                 "status": "pending",
 
                 "campaign_id": campaign.id,
 
                 "total": total,
 
+                "real_calls": real_call_count,
+                "not_called": not_called_count,
+
                 "success": 0,
-
                 "no_answer": 0,
-
                 "failed": 0,
-
                 "invalid": 0,
 
-                "job_id": "",
+                "job_id": str(job_id),
 
                 "message": (
-                    "Campaign queued. "
-                    "It will complete in approximately 8-10 minutes."
+                    f"First {real_call_count} numbers sent for real calling. "
+                    f"Remaining {not_called_count} numbers were not sent. "
+                    f"Campaign will complete in approximately 8-10 minutes."
                 )
             })
 
         # ============================================
         # <= 100 NUMBERS
-        # REAL OBD CALL
+        # ALL NUMBERS -> REAL OBD CALL
         # ============================================
 
         campaign = VoiceCampaign.objects.create(
-
             user=user,
-
             name=campaign_name,
-
             voice_file_id=media_file_id,
-
             caller_id=caller_id,
-
             plan_id=plan_id,
-
             call_type=call_type,
 
             total=total,
 
+            success=0,
+            no_answer=0,
+            failed=0,
+            nonwa=0,
+
             status="running",
         )
 
+        # Since total <= 100,
+        # numbers_to_call contains ALL valid numbers.
         job_id = make_bulk_obd_call(
-
-            valid_numbers,
-
+            numbers_to_call,
             media_file_id,
-
             retry_attempt,
-
             retry_duration
         )
 
         # ==================================
         # OBD SUCCESS
         # ==================================
-
         if job_id:
 
             results = [
-
                 {
                     "number": number,
                     "status": "sent",
-                    "job_id": str(job_id)
+                    "job_id": str(job_id),
+                    "real_call": True
                 }
-
-                for number in valid_numbers
+                for number in numbers_to_call
             ]
 
             campaign.success = total
             campaign.no_answer = 0
             campaign.failed = 0
             campaign.nonwa = len(invalid_input_results)
+
             campaign.job_id = str(job_id)
-            campaign.results = results + invalid_input_results
+
+            campaign.results = (
+                results + invalid_input_results
+            )
+
             campaign.status = "done"
 
             campaign.save()
 
+            # ----------------------------------
             # CREDIT ONLY AFTER OBD ACCEPTED
+            # ----------------------------------
             if user.role != "admin":
 
                 with transaction.atomic():
@@ -1026,13 +1080,9 @@ def send_bulk_voice(request):
                     )
 
                     CreditHistory.objects.create(
-
                         user=user,
-
                         amount=total,
-
                         type="debit",
-
                         remarks=(
                             f"{total} Credits Debited For "
                             f"Voice Campaign — {campaign_name}"
@@ -1042,17 +1092,18 @@ def send_bulk_voice(request):
             cache.clear()
 
             return Response({
-
                 "status": "done",
 
                 "campaign_id": campaign.id,
 
                 "total": total,
 
+                "real_calls": total,
+                "not_called": 0,
+
                 "success": total,
-
+                "no_answer": 0,
                 "failed": 0,
-
                 "invalid": len(invalid_input_results),
 
                 "job_id": str(job_id),
@@ -1063,22 +1114,24 @@ def send_bulk_voice(request):
         # ==================================
         # OBD FAILED
         # ==================================
-
         failed_results = [
-
             {
                 "number": number,
-                "status": "Failed"
+                "status": "Failed",
+                "real_call": True
             }
-
-            for number in valid_numbers
+            for number in numbers_to_call
         ]
 
         campaign.success = 0
         campaign.no_answer = 0
         campaign.failed = total
         campaign.nonwa = len(invalid_input_results)
-        campaign.results = failed_results + invalid_input_results
+
+        campaign.results = (
+            failed_results + invalid_input_results
+        )
+
         campaign.status = "failed"
 
         campaign.save()
@@ -1086,20 +1139,28 @@ def send_bulk_voice(request):
         cache.clear()
 
         return Response({
-
             "status": "failed",
 
             "campaign_id": campaign.id,
 
             "total": total,
 
+            "real_calls": 0,
+            "not_called": 0,
+
             "success": 0,
-
+            "no_answer": 0,
             "failed": total,
-
             "invalid": len(invalid_input_results),
 
             "message": "OBD API failed"
+        })
+
+    except User.DoesNotExist:
+
+        return Response({
+            "status": "failed",
+            "message": "User not found"
         })
 
     except Exception as e:
@@ -1110,7 +1171,6 @@ def send_bulk_voice(request):
             "status": "error",
             "message": str(e)
         })
-
 # =====================================
 # SCHEDULE CAMPAIGN
 # =====================================
