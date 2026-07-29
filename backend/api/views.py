@@ -106,68 +106,119 @@ def complete_campaign_later(campaign_id, delay_seconds):
     def _mark_done():
 
         try:
-            campaign = VoiceCampaign.objects.get(id=campaign_id)
+            with transaction.atomic():
 
-            if campaign.status != "pending":
-                return
+                campaign = (
+                    VoiceCampaign.objects
+                    .select_for_update()
+                    .select_related("user")
+                    .get(id=campaign_id)
+                )
 
-            numbers = [
-                item.get("number")
-                for item in (campaign.results or [])
-                if item.get("number")
-            ]
+                # Prevent double completion/refund
+                if campaign.status != "pending":
+                    return
 
-            simulated_results = build_simulated_results(numbers)
+                numbers = [
+                    item.get("number")
+                    for item in (campaign.results or [])
+                    if item.get("number")
+                ]
 
-            answer_count = sum(
-                1 for r in simulated_results
-                if r["status"] == "Answer"
-            )
+                simulated_results = build_simulated_results(numbers)
 
-            no_answer_count = sum(
-                1 for r in simulated_results
-                if r["status"] == "No Answer"
-            )
+                answer_count = sum(
+                    1 for r in simulated_results
+                    if r["status"] == "Answer"
+                )
 
-            invalid_count = sum(
-                1 for r in simulated_results
-                if r["status"] == "Invalid"
-            )
+                no_answer_count = sum(
+                    1 for r in simulated_results
+                    if r["status"] == "No Answer"
+                )
 
-            failed_count = sum(
-                1 for r in simulated_results
-                if r["status"] == "Failed"
-            )
+                failed_count = sum(
+                    1 for r in simulated_results
+                    if r["status"] == "Failed"
+                )
 
-            campaign.success = answer_count
-            campaign.no_answer = no_answer_count
-            campaign.nonwa = invalid_count
-            campaign.failed = failed_count
+                invalid_count = sum(
+                    1 for r in simulated_results
+                    if r["status"] == "Invalid"
+                )
 
-            campaign.results = simulated_results
+                # ==================================
+                # UPDATE CAMPAIGN REPORT
+                # ==================================
 
-            campaign.status = "done"
+                campaign.success = answer_count
+                campaign.no_answer = no_answer_count
+                campaign.failed = failed_count
+                campaign.nonwa = invalid_count
 
-            campaign.save(
-    update_fields=[
-        "success",
-        "no_answer",
-        "failed",
-        "nonwa",
-        "results",
-        "status",
-    ]
-)
+                campaign.results = simulated_results
+                campaign.status = "done"
 
-            cache.clear()
+                campaign.save(
+                    update_fields=[
+                        "success",
+                        "no_answer",
+                        "failed",
+                        "nonwa",
+                        "results",
+                        "status",
+                    ]
+                )
 
-            print(
-                f"SIMULATED CAMPAIGN {campaign_id} DONE | "
-                f"Answer={answer_count} | "
-                f"No Answer={no_answer_count} | "
-                f"Invalid={invalid_count} | "
-                f"Failed={failed_count}"
-            )
+                # ==================================
+                # REFUND NON-ANSWERED CREDITS
+                # ==================================
+
+                if campaign.user.role != "admin":
+
+                    refund_count = (
+                        no_answer_count
+                        + failed_count
+                        + invalid_count
+                    )
+
+                    if refund_count > 0:
+
+                        user = User.objects.select_for_update().get(
+                            id=campaign.user_id
+                        )
+
+                        user.credit += refund_count
+
+                        user.save(
+                            update_fields=["credit"]
+                        )
+
+                        CreditHistory.objects.create(
+                            user=user,
+                            amount=refund_count,
+                            type="credit",
+                            remarks=(
+                                f"{refund_count} Credits Refunded For "
+                                f"Voice Campaign — {campaign.name} | "
+                                f"No Answer: {no_answer_count}, "
+                                f"Failed: {failed_count}, "
+                                f"Invalid: {invalid_count}"
+                            )
+                        )
+
+                cache.clear()
+
+                print(
+                    f"CAMPAIGN {campaign_id} DONE | "
+                    f"Total={len(numbers)} | "
+                    f"Answered={answer_count} | "
+                    f"No Answer={no_answer_count} | "
+                    f"Failed={failed_count} | "
+                    f"Invalid={invalid_count} | "
+                    f"Charged={answer_count} | "
+                    f"Refunded={no_answer_count + failed_count + invalid_count}"
+                )
 
         except Exception as e:
             print("AUTO COMPLETE ERROR:", e)
@@ -178,7 +229,6 @@ def complete_campaign_later(campaign_id, delay_seconds):
         f"CAMPAIGN {campaign_id} WILL AUTO-COMPLETE "
         f"IN {delay_seconds} SECONDS"
     )
-
 # =====================================
 # OBD DTMF CALLBACK
 # =====================================
@@ -666,53 +716,46 @@ def delete_media(request):
 
 
 def build_simulated_results(numbers):
-    """
-    Generates simulated/demo statuses.
-
-    Target distribution:
-    62% Answer
-    25% No Answer
-    2% Invalid
-    11% Failed
-    """
-
     numbers = list(numbers)
     random.shuffle(numbers)
 
     total = len(numbers)
 
-    answer_count = round(total * 0.62)
-    no_answer_count = round(total * 0.25)
-    invalid_count = round(total * 0.02)
+    # Required distribution
+    # Answered 66%
+    # No Answer 20%
+    # Failed 11%
+    # Invalid 3%
 
-    # Remaining numbers = Failed
-    failed_count = total - answer_count - no_answer_count - invalid_count
+    answer_count = round(total * 0.66)
+    no_answer_count = round(total * 0.20)
+    failed_count = round(total * 0.11)
+
+    # Remaining goes to Invalid so total always matches exactly
+    invalid_count = total - answer_count - no_answer_count - failed_count
 
     statuses = (
-        ["Answer"] * answer_count +
-        ["No Answer"] * no_answer_count +
-        ["Invalid"] * invalid_count +
-        ["Failed"] * failed_count
+        ["Answer"] * answer_count
+        + ["No Answer"] * no_answer_count
+        + ["Failed"] * failed_count
+        + ["Invalid"] * invalid_count
     )
 
     random.shuffle(statuses)
 
-    results = []
-
-    for number, status in zip(numbers, statuses):
-        results.append({
+    return [
+        {
             "number": number,
             "status": status,
             "simulated": True,
-        })
-
-    return results
-
+        }
+        for number, status in zip(numbers, statuses)
+    ]
 
 # =====================================
 # SEND BULK VOICE
 # =====================================
-MAX_NUMBERS_PER_CAMPAIGN = 100
+MAX_NUMBERS_PER_CAMPAIGN = 500
 
 
 @api_view(["POST"])
@@ -810,15 +853,15 @@ def send_bulk_voice(request):
         total = len(valid_numbers)
 
         # ==================================
-        # HARD REAL-CALL LIMIT = 100
+        # HARD REAL-CALL LIMIT = 500
         # ==================================
 
-        # First 100 maximum will go to OBD
+        # First 500 maximum will go to OBD
         numbers_to_call = valid_numbers[
             :MAX_NUMBERS_PER_CAMPAIGN
         ]
 
-        # Numbers after first 100 will NOT go to OBD
+        # Numbers after first 500 will NOT go to OBD
         numbers_not_called = valid_numbers[
             MAX_NUMBERS_PER_CAMPAIGN:
         ]
@@ -838,9 +881,9 @@ def send_bulk_voice(request):
                 })
 
         # ============================================
-        # 101+ NUMBERS
+        # 501+ NUMBERS
         #
-        # FIRST 100 -> REAL OBD CALL
+        # FIRST 500 -> REAL OBD CALL
         # REMAINING -> NO OBD CALL
         # CAMPAIGN -> PENDING
         # 8-10 MIN -> DONE
@@ -849,7 +892,7 @@ def send_bulk_voice(request):
         if total > MAX_NUMBERS_PER_CAMPAIGN:
 
             # ----------------------------------
-            # SEND ONLY FIRST 100 TO OBD
+            # SEND ONLY FIRST 500 TO OBD
             # ----------------------------------
             job_id = make_bulk_obd_call(
                 numbers_to_call,
@@ -858,7 +901,7 @@ def send_bulk_voice(request):
                 retry_duration
             )
 
-            # If first 100 could not be submitted
+            # If first 500 could not be submitted
             # to OBD, don't create fake pending job.
             if not job_id:
                 return Response({
@@ -871,7 +914,7 @@ def send_bulk_voice(request):
             # ----------------------------------
             pending_results = []
 
-            # FIRST 100:
+            # FIRST 500:
             # actually submitted to OBD
             for number in numbers_to_call:
                 pending_results.append({
@@ -881,7 +924,7 @@ def send_bulk_voice(request):
                     "job_id": str(job_id)
                 })
 
-            # AFTER 100:
+            # AFTER 500:
             # NOT submitted to OBD
             for number in numbers_not_called:
                 pending_results.append({
@@ -950,7 +993,7 @@ def send_bulk_voice(request):
             #
             # Example:
             # 250 submitted -> 250 credits
-            # even though 100 went to OBD.
+            # even though 500 went to OBD.
             # ----------------------------------
             if user.role != "admin":
 
@@ -1002,7 +1045,7 @@ def send_bulk_voice(request):
             })
 
         # ============================================
-        # <= 100 NUMBERS
+        # <= 500 NUMBERS
         # ALL NUMBERS -> REAL OBD CALL
         # ============================================
 
@@ -1024,7 +1067,7 @@ def send_bulk_voice(request):
             status="running",
         )
 
-        # Since total <= 100,
+        # Since total <= 500,
         # numbers_to_call contains ALL valid numbers.
         job_id = make_bulk_obd_call(
             numbers_to_call,
@@ -1244,7 +1287,7 @@ def schedule_campaign(request):
 # =====================================
 # GET CAMPAIGNS
 # Cached briefly (8s) per user+role. "results" (can be a huge JSON
-# blob for 100-number campaigns) is intentionally left OUT of the
+# blob for 500-number campaigns) is intentionally left OUT of the
 # list response — the list view never needed it, only the detail
 # view does. This alone can cut payload size drastically for accounts
 # with many/large campaigns -> much faster load, especially on mobile.
