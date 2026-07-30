@@ -90,6 +90,7 @@ CSRF_TRUSTED_ORIGINS = [
     "https://voicechannel.co.in",
     "https://www.voicechannel.co.in",
     "https://latestvoice.vercel.app",
+    
 ]
 
 # ---------------------------------------------------
