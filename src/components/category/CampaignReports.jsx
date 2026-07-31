@@ -1,551 +1,373 @@
-import React, { useEffect, useRef, useState } from "react";
-import {
-  CalendarDays, ChevronDown, ChevronLeft, ChevronRight, ChevronsUpDown, Eye, UploadCloud,
-} from "lucide-react";
+import React, { useEffect, useState } from "react";
+import { RotateCw, ChevronDown, X, Search, Download, ChevronsUpDown } from "lucide-react";
 import { BASE } from "../api";
 import * as XLSX from "xlsx";
 import { saveAs } from "file-saver";
 
-const CampaignReoprts = () => {
-  const [filterOpen, setFilterOpen] = useState(false);
-  const [selectedFilter, setSelectedFilter] = useState("Today");
-  const [entries, setEntries] = useState([]);
+const OutboundReports = () => {
+  // ---- Generate Report filters ----
+  const [reportType, setReportType] = useState("");
+  const [campaign, setCampaign] = useState(""); // "" = All Campaign
+  const [startDate, setStartDate] = useState("");
+  const [endDate, setEndDate] = useState("");
+  const [campaignsList, setCampaignsList] = useState([]);
+  const [generating, setGenerating] = useState(false);
+
+  const reportTypes = ["Call Detail Report", "Summary Report", "Disposition Report"];
+
+  // ---- Download Reports table (built client-side, no extra backend needed) ----
+  const [requests, setRequests] = useState([]);
   const [search, setSearch] = useState("");
   const [showEntries, setShowEntries] = useState(10);
   const [page, setPage] = useState(1);
-  const [loading, setLoading] = useState(false);
-
-  // Detail modal
-  const [showDetail, setShowDetail] = useState(false);
-  const [detailData, setDetailData] = useState(null);
-  const [detailLoading, setDetailLoading] = useState(false);
-
-  // Disposition report upload
-  const fileInputRef = useRef(null);
-  const [uploading, setUploading] = useState(false);
-
-  const role = sessionStorage.getItem("role")?.toLowerCase();
-  const canUpload = role === "admin";
-
-  const filters = ["Today", "Yesterday", "Last 7 Days", "Last 30 Days", "This Month", "Last Month"];
+  let reqCounter = 17800;
 
   useEffect(() => {
-    loadReports();
-    const interval = setInterval(loadReports, 30000); // auto-refresh every 30s
-    return () => clearInterval(interval);
-  }, [selectedFilter]);
+    loadCampaignsList();
+  }, []);
 
-  const loadReports = async () => {
+  const loadCampaignsList = async () => {
     try {
-      setLoading(true);
       const userId = sessionStorage.getItem("user_id");
       const res = await fetch(`${BASE}/get-campaigns/?user_id=${userId}`);
       const data = await res.json();
+      setCampaignsList(Array.isArray(data) ? data : []);
+    } catch (err) {
+      console.log(err);
+      setCampaignsList([]);
+    }
+  };
 
-      if (!data || data.length === 0) { setEntries([]); setLoading(false); return; }
+  const inRange = (createdAt) => {
+    if (!startDate && !endDate) return true;
+    const d = new Date(createdAt);
+    if (startDate && d < new Date(startDate)) return false;
+    if (endDate && d > new Date(endDate)) return false;
+    return true;
+  };
 
-      const now = new Date();
+  // ==============================
+  // GENERATE REPORT — pulls real data from your existing endpoints
+  // ==============================
+  const handleGenerateReport = async () => {
+    if (!reportType) {
+      alert("Please select Report Type");
+      return;
+    }
 
-      const filtered = data.filter((r) => {
-        const d = new Date(r.created_at);
-        if (selectedFilter === "Today") return d.toDateString() === now.toDateString();
-        if (selectedFilter === "Yesterday") {
-          const y = new Date(); y.setDate(y.getDate() - 1);
-          return d.toDateString() === y.toDateString();
+    setGenerating(true);
+    try {
+      let sheetRows = [];
+      let campaignLabel = "All Campaign";
+
+      if (!campaign) {
+        // ---- All Campaign: summary from /get-campaigns/ (already loaded) ----
+        const filtered = campaignsList.filter((r) => inRange(r.created_at));
+        if (filtered.length === 0) {
+          alert("No campaign data found for this date range");
+          setGenerating(false);
+          return;
         }
-        if (selectedFilter === "Last 7 Days") {
-          const p = new Date(); p.setDate(p.getDate() - 7); return d >= p;
+        sheetRows = filtered.map((r) => ({
+          Date: new Date(r.created_at).toLocaleDateString(),
+          Name: r.name,
+          "Caller ID": r.caller_id || "-",
+          Total: r.total || 0,
+          Answered: r.success || 0,
+          "No Answer": r.no_answer || 0,
+          Failed: r.failed || 0,
+          Invalid: r.invalid || 0,
+          Status: r.status || "",
+          "Job ID": r.job_id || "-",
+        }));
+      } else {
+        // ---- Specific campaign: pull real detail ----
+        const selected = campaignsList.find((c) => String(c.id) === String(campaign));
+        campaignLabel = selected?.name || `Campaign ${campaign}`;
+
+        const res = await fetch(`${BASE}/get-campaign-detail/?campaign_id=${campaign}`);
+        const detail = await res.json();
+
+        if (detail.status === "pending") {
+          alert("Campaign is still pending. Report will be available after completion.");
+          setGenerating(false);
+          return;
         }
-        if (selectedFilter === "Last 30 Days") {
-          const p = new Date(); p.setDate(p.getDate() - 30); return d >= p;
+
+        if (reportType === "Disposition Report") {
+          if (!detail.dispositions || detail.dispositions.length === 0) {
+            alert("No disposition data found. Upload the disposition report for this campaign first.");
+            setGenerating(false);
+            return;
+          }
+          sheetRows = detail.dispositions.map((d) => ({
+            Number: d.mobile,
+            Date: d.call_date,
+            "Dial Time": d.dial_time,
+            "Answer Time": d.answered_time || "-",
+            "End Time": d.end_time,
+            "Duration(s)": d.duration,
+            "Call Status": d.call_status,
+            Disposition: d.disposition,
+            Retry: d.retry,
+            Pulse: d.pulse,
+            DTMF: d.dtmf_input || "-",
+          }));
+        } else {
+          // Call Detail Report / Summary Report -> Number + Status list
+          const results = detail.results || [];
+          if (results.length === 0) {
+            alert("No report data found for this campaign");
+            setGenerating(false);
+            return;
+          }
+          sheetRows = results.map((r) => ({ Number: r.number, Status: r.status }));
         }
-        if (selectedFilter === "This Month") return d.getMonth() === now.getMonth() && d.getFullYear() === now.getFullYear();
-        if (selectedFilter === "Last Month") {
-          const lm = new Date(now.getFullYear(), now.getMonth() - 1, 1);
-          return d.getMonth() === lm.getMonth() && d.getFullYear() === lm.getFullYear();
-        }
-        return true;
+      }
+
+      const worksheet = XLSX.utils.json_to_sheet(sheetRows);
+      const workbook = XLSX.utils.book_new();
+      XLSX.utils.book_append_sheet(workbook, worksheet, "Report");
+      const excelBuffer = XLSX.write(workbook, { bookType: "xlsx", type: "array" });
+      const blob = new Blob([excelBuffer], {
+        type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
       });
 
-      const formatted = filtered.map((r, i) => ({
-        id: r.id,
-        date: new Date(r.created_at).toLocaleDateString(),
-        name: r.name || `Campaign ${i + 1}`,
-        totalCount: r.total || 0,
-        process: r.success || 0,
-        noAnswer: r.no_answer || 0,
-        pending: r.failed || 0,
-        invalid: r.invalid || 0,
-        jobId: r.job_id || "",
-        status: r.status || "",
-        callerId: r.caller_id || "",
-      }));
+      reqCounter += 1;
+      const now = new Date();
+      const newRequest = {
+        id: reqCounter,
+        request_date: now.toLocaleString(),
+        start_date: startDate ? new Date(startDate).toLocaleString() : "-",
+        end_date: endDate ? new Date(endDate).toLocaleString() : "-",
+        report_type: reportType,
+        campaign_name: campaignLabel,
+        status: "Report Generated",
+        blob,
+        fileName: `${campaignLabel.replace(/\s+/g, "_")}_${reportType.replace(/\s+/g, "_")}.xlsx`,
+      };
 
-      setEntries(formatted);
+      setRequests((prev) => [newRequest, ...prev]);
       setPage(1);
     } catch (err) {
       console.log(err);
-      setEntries([]);
+      alert("Something went wrong while generating the report ❌");
     }
-    setLoading(false);
+    setGenerating(false);
   };
 
-  const loadDetail = async (campaignId) => {
-    try {
-      setDetailLoading(true);
-      const res = await fetch(`${BASE}/get-campaign-detail/?campaign_id=${campaignId}`);
-      const data = await res.json();
-      console.log("DETAIL DATA =>", data);
-      setDetailData(data);
-      setShowDetail(true);
-    } catch (err) {
-      console.log(err);
-      alert("Error loading detail ❌");
+  const handleDownload = (row) => {
+    if (row.status !== "Report Generated" || !row.blob) {
+      alert("Report is still processing. Please wait.");
+      return;
     }
-    setDetailLoading(false);
+    saveAs(row.blob, row.fileName);
   };
 
-  // ==============================
-  // UPLOAD DISPOSITION REPORT (the real OBD Excel export)
-  // ==============================
-  const handleUploadClick = () => {
-    if (fileInputRef.current) fileInputRef.current.click();
-  };
-
-  const handleDispositionFile = async (e) => {
-    const file = e.target.files[0];
-    e.target.value = ""; // allow re-selecting same file next time
-    if (!file) return;
-
-    try {
-      setUploading(true);
-      const formData = new FormData();
-      formData.append("file", file);
-      formData.append("admin_id", sessionStorage.getItem("user_id"));
-
-      const res = await fetch(`${BASE}/upload-disposition-report/`, {
-        method: "POST",
-        body: formData,
-      });
-      const data = await res.json();
-
-      if (data.status === "success") {
-        alert(
-          `✅ Disposition Report Imported!\n\n` +
-          `Total Rows: ${data.total_rows}\n` +
-          `Matched to Campaign: ${data.matched}\n` +
-          `Unmatched: ${data.unmatched}\n` +
-          `New: ${data.new}  |  Updated: ${data.updated}`
-        );
-        loadReports();
-      } else {
-        alert(`❌ Import Failed: ${data.message || "Something went wrong"}`);
-      }
-    } catch (err) {
-      console.log(err);
-      alert("Network Error while uploading ❌");
-    }
-    setUploading(false);
-  };
-
-  // ==============================
-  // DOWNLOAD REPORT — mirrors the real OBD disposition report
-  // when disposition data is available, falls back to basic
-  // call status list otherwise
-  // ==============================
-const downloadReport = () => {
-
-  if (!detailData) {
-    alert("No data found");
-    return;
-  }
-
-  if (detailData.status === "pending") {
-    alert("Campaign is still pending. Report will be available after completion.");
-    return;
-  }
-
-  const results = detailData.results || [];
-
-  if (results.length === 0) {
-    alert("No report data found");
-    return;
-  }
-
-  const excelData = results.map((r) => ({
-    Number: r.number,
-    Status: r.status,
-  }));
-
-  const worksheet = XLSX.utils.json_to_sheet(excelData);
-
-  worksheet["!cols"] = [
-    { wch: 18 },
-    { wch: 18 },
-  ];
-
-  const workbook = XLSX.utils.book_new();
-
-  XLSX.utils.book_append_sheet(
-    workbook,
-    worksheet,
-    "Report"
+  const filteredRequests = requests.filter(
+    (r) =>
+      (r.campaign_name || "").toLowerCase().includes(search.toLowerCase()) ||
+      String(r.id).includes(search) ||
+      (r.report_type || "").toLowerCase().includes(search.toLowerCase())
   );
-
-  const excelBuffer = XLSX.write(
-    workbook,
-    {
-      bookType: "xlsx",
-      type: "array",
-    }
-  );
-
-  const file = new Blob(
-    [excelBuffer],
-    {
-      type:
-        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-    }
-  );
-
-  saveAs(
-    file,
-    `${detailData.name}_report.xlsx`
-  );
-};
-
-  const filteredEntries = entries.filter((item) =>
-    item.name.toLowerCase().includes(search.toLowerCase())
-  );
-
-  const totalPages = Math.ceil(filteredEntries.length / showEntries);
-  const paginated = filteredEntries.slice((page - 1) * showEntries, page * showEntries);
-
-  const dispositionBadge = (disp) => {
-    const d = (disp || "").toLowerCase();
-    if (d.includes("answer")) return "bg-green-100 text-green-700";
-    if (d.includes("ring")) return "bg-yellow-100 text-yellow-700";
-    return "bg-red-100 text-red-600";
-  };
+  const totalPages = Math.ceil(filteredRequests.length / showEntries) || 1;
+  const paginated = filteredRequests.slice((page - 1) * showEntries, page * showEntries);
 
   return (
-    <div className="min-h-screen bg-[#efefef] p-3 md:p-5 overflow-x-hidden">
-      <div className="w-full bg-[#f3f3f3] rounded-[20px] border border-[#ef7fa4] overflow-hidden shadow-sm">
-
-        {/* HEADER */}
-        <div className="bg-[#ececec] border-b border-[#e5e5e5] px-4 md:px-7 py-5 flex items-center justify-between flex-wrap gap-3">
-          <h1 className="text-[18px] md:text-[24px] font-[700] text-black uppercase">Campaign Report</h1>
-
-          {canUpload && (
-            <>
-              <input
-                type="file"
-                ref={fileInputRef}
-                accept=".xlsx,.xls"
-                onChange={handleDispositionFile}
-                className="hidden"
-              />
-              <button
-                onClick={handleUploadClick}
-                disabled={uploading}
-                className="h-[42px] px-5 rounded-full bg-[#3d2d83] hover:bg-[#2c2063] disabled:opacity-50 text-white flex items-center gap-2 text-[13px] md:text-[14px] font-[600]"
-              >
-                <UploadCloud size={16} />
-                {uploading ? "Importing..." : "Upload Disposition Report"}
-              </button>
-            </>
-          )}
+    <div className="min-h-screen bg-[#eef0f5] p-3 md:p-5">
+      {/* TABS */}
+      <div className="flex items-center gap-1">
+        <div className="px-5 py-2.5 bg-[#3d4b94] text-white text-[14px] font-[600] rounded-t-lg">
+          Reports
         </div>
 
-        <div className="px-3 md:px-6 py-6">
+      </div>
 
-          {/* TOP */}
-          <div className="flex items-center justify-between flex-wrap gap-4 mb-6">
-            <div className="relative">
-              <button
-                onClick={() => setFilterOpen(!filterOpen)}
-                className="h-[42px] px-5 rounded-full bg-[#e36f97] text-white flex items-center gap-2 text-[14px] md:text-[16px] font-[500]"
-              >
-                <CalendarDays size={16} />
-                {selectedFilter}
-                <ChevronDown size={14} />
-              </button>
-              {filterOpen && (
-                <div className="absolute left-0 top-[52px] bg-white w-[180px] rounded-xl border border-gray-200 shadow-lg z-50 overflow-hidden">
-                  {filters.map((item, i) => (
-                    <div key={i}
-                      onClick={() => { setSelectedFilter(item); setFilterOpen(false); }}
-                      className="px-4 py-2 hover:bg-pink-50 cursor-pointer text-[14px]"
-                    >{item}</div>
+      {/* GENERATE REPORT CARD */}
+      <div className="bg-white rounded-b-lg rounded-tr-lg border border-[#e2e5ec] shadow-sm">
+        <div className="flex items-center justify-between px-5 py-4 border-b border-[#eee]">
+          <h2 className="text-[14px] font-[600] text-black">Outbound Reports</h2>
+          <div className="flex items-center gap-2 text-[12px] text-gray-500">
+            <RotateCw size={15} className="cursor-pointer" onClick={loadCampaignsList} />
+            <span>Dashboard &gt; Voice &gt; Reports &gt; Detail Report &gt; Version: v1.0</span>
+          </div>
+        </div>
+
+        <div className="px-5 py-6 grid grid-cols-1 md:grid-cols-2 gap-x-10 gap-y-5">
+          {/* LEFT COLUMN */}
+          <div className="space-y-5">
+            <div className="flex items-center gap-4">
+              <label className="w-[110px] text-[13px] text-gray-600 shrink-0">Select Report</label>
+              <div className="relative flex-1">
+                <select
+                  value={reportType}
+                  onChange={(e) => setReportType(e.target.value)}
+                  className="w-full h-[38px] appearance-none border border-[#dcdfe6] rounded-md bg-[#f7f8fa] px-3 pr-16 text-[13px] outline-none"
+                >
+                  <option value="">Select Report Type</option>
+                  {reportTypes.map((r) => (
+                    <option key={r} value={r}>{r}</option>
                   ))}
+                </select>
+                <div className="absolute right-2 top-1/2 -translate-y-1/2 flex items-center gap-1 text-gray-400">
+                  {reportType && <X size={13} className="cursor-pointer" onClick={() => setReportType("")} />}
+                  <ChevronDown size={14} />
                 </div>
-              )}
+              </div>
             </div>
 
-            <button onClick={loadReports}
-              className="h-[42px] px-5 rounded-full bg-gray-200 text-gray-700 text-[14px] font-medium hover:bg-gray-300">
-              🔄 Refresh
-            </button>
+            <div className="flex items-center gap-4">
+              <label className="w-[110px] text-[13px] text-gray-600 shrink-0">Select Campaign</label>
+              <div className="relative flex-1">
+                <select
+                  value={campaign}
+                  onChange={(e) => setCampaign(e.target.value)}
+                  className="w-full h-[38px] appearance-none border border-[#dcdfe6] rounded-md bg-[#f7f8fa] px-3 pr-16 text-[13px] outline-none"
+                >
+                  <option value="">All Campaign</option>
+                  {campaignsList.map((c) => (
+                    <option key={c.id} value={c.id}>{c.name}</option>
+                  ))}
+                </select>
+                <div className="absolute right-2 top-1/2 -translate-y-1/2 flex items-center gap-1 text-gray-400">
+                  {campaign && <X size={13} className="cursor-pointer" onClick={() => setCampaign("")} />}
+                  <ChevronDown size={14} />
+                </div>
+              </div>
+            </div>
           </div>
 
-          {/* SHOW + SEARCH */}
-          <div className="flex items-center justify-between flex-wrap gap-4 mb-5">
-            <div className="flex items-center gap-2 text-[14px] md:text-[16px] text-black">
-              <span>Show</span>
-              <select
-                value={showEntries}
-                onChange={(e) => { setShowEntries(Number(e.target.value)); setPage(1); }}
-                className="w-[70px] h-[40px] border border-[#d9d9d9] rounded-lg px-2 text-[14px] outline-none bg-white"
-              >
-                <option value="10">10</option>
-                <option value="25">25</option>
-                <option value="50">50</option>
-              </select>
-              <span>entries</span>
-            </div>
-            <div className="flex items-center gap-2">
-              <span className="text-[14px] md:text-[16px]">Search:</span>
+          {/* RIGHT COLUMN */}
+          <div className="space-y-5">
+            <div className="flex items-center gap-4">
+              <label className="w-[80px] text-[13px] text-gray-600 shrink-0">Start Date</label>
               <input
-                type="text" value={search}
-                onChange={(e) => { setSearch(e.target.value); setPage(1); }}
-                className="w-[180px] md:w-[240px] h-[40px] border border-[#d8d8d8] rounded-lg px-3 outline-none bg-white text-[14px]"
+                type="datetime-local"
+                value={startDate}
+                onChange={(e) => setStartDate(e.target.value)}
+                className="flex-1 h-[38px] border border-[#dcdfe6] rounded-md bg-[#f7f8fa] px-3 text-[13px] outline-none"
+              />
+            </div>
+            <div className="flex items-center gap-4">
+              <label className="w-[80px] text-[13px] text-gray-600 shrink-0">End Date</label>
+              <input
+                type="datetime-local"
+                value={endDate}
+                onChange={(e) => setEndDate(e.target.value)}
+                className="flex-1 h-[38px] border border-[#dcdfe6] rounded-md bg-[#f7f8fa] px-3 text-[13px] outline-none"
               />
             </div>
           </div>
+        </div>
 
-          {/* TABLE */}
-          <div className="w-full overflow-x-auto rounded-[14px] border border-[#e2e2e2] bg-white">
-            <table className="w-full min-w-[900px]">
-              <thead>
-                <tr className="bg-[#fafafa]">
-                  {["Date", "Name", "Caller ID", "Total", "Answered","No Answer", "Failed", "Invalid", "Status", "Job ID", "View"].map((head, i) => (
-                    <th key={i} className="border-r border-b border-[#e6e6e6] px-3 py-4 text-left">
-                      <div className="flex items-center gap-1 text-[13px] md:text-[15px] font-[700] text-black whitespace-nowrap">
-                        {head}
-                        <ChevronsUpDown size={14} className="text-[#d3d3d3]" />
-                      </div>
-                    </th>
-                  ))}
-                </tr>
-              </thead>
-              <tbody>
-                {loading ? (
-                  <tr><td colSpan="11" className="text-center py-10 text-[15px]">Loading...</td></tr>
-                ) : paginated.length === 0 ? (
-                  <tr><td colSpan="11" className="text-center py-10 text-[15px] text-black">No data available in table</td></tr>
-                ) : paginated.map((item, index) => (
-                  <tr key={index} className="hover:bg-gray-50 duration-200">
-                    <td className="px-3 py-4 border-b border-[#ececec] text-[13px]">{item.date}</td>
-                    <td className="px-3 py-4 border-b border-[#ececec] text-[13px]">{item.name}</td>
-                    <td className="px-3 py-4 border-b border-[#ececec] text-[13px]">{item.callerId || "-"}</td>
-<td className="px-3 py-4 border-b border-[#ececec] text-[13px]">
-  {item.totalCount}
-</td>
-
-{/* Answered */}
-<td className="px-3 py-4 border-b border-[#ececec] text-[13px] text-green-600 font-semibold">
-  {item.process}
-</td>
-
-{/* No Answer */}
-<td className="px-3 py-4 border-b border-[#ececec] text-[13px] text-blue-500 font-semibold">
-  {item.noAnswer}
-</td>
-
-{/* Failed */}
-<td className="px-3 py-4 border-b border-[#ececec] text-[13px] text-red-500 font-semibold">
-  {item.pending}
-</td>
-
-{/* Invalid */}
-<td className="px-3 py-4 border-b border-[#ececec] text-[13px] text-orange-500 font-semibold">
-  {item.invalid}
-</td>
-                    <td className="px-3 py-4 border-b border-[#ececec] text-[13px]">{item.status}</td>
-                    <td className="px-3 py-4 border-b border-[#ececec] text-[13px]">{item.jobId || "-"}</td>
-                    <td className="px-3 py-4 border-b border-[#ececec]">
-                      <button
-                        onClick={() => loadDetail(item.id)}
-                        disabled={detailLoading}
-                        className="w-[34px] h-[34px] rounded-full bg-pink-100 flex items-center justify-center disabled:opacity-50"
-                      >
-                        <Eye size={15} />
-                      </button>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-
-          {/* FOOTER */}
-          <div className="flex items-center justify-between flex-wrap gap-4 mt-6">
-                        <div className="text-[13px] md:text-[15px] text-black">
-              Showing {filteredEntries.length === 0 ? 0 : (page - 1) * showEntries + 1} to{" "}
-              {Math.min(page * showEntries, filteredEntries.length)} of {filteredEntries.length} entries
-            </div>
-            <div className="flex items-center gap-3">
-              <button
-                onClick={() => setPage(p => Math.max(1, p - 1))}
-                disabled={page === 1}
-                className="bg-[#e36f97] hover:bg-[#d95f89] disabled:opacity-50 text-white px-5 h-[42px] rounded-full flex items-center gap-1 text-[13px] md:text-[14px] duration-200"
-              >
-                <ChevronLeft size={15} /> Previous
-              </button>
-              <button
-                onClick={() => setPage(p => Math.min(totalPages, p + 1))}
-                disabled={page >= totalPages}
-                className="bg-[#e36f97] hover:bg-[#d95f89] disabled:opacity-50 text-white px-5 h-[42px] rounded-full flex items-center gap-1 text-[13px] md:text-[14px] duration-200"
-              >
-                Next <ChevronRight size={15} />
-              </button>
-            </div>
-          </div>
+        <div className="px-5 pb-6">
+          <button
+            onClick={handleGenerateReport}
+            disabled={generating}
+            className="h-[40px] px-6 rounded-md bg-[#3d4b94] hover:bg-[#323d78] disabled:opacity-50 text-white text-[13px] font-[600]"
+          >
+            {generating ? "Generating..." : "Generate Report"}
+          </button>
         </div>
       </div>
 
-      {/* DETAIL MODAL */}
-      {showDetail && detailData && (
-        <div className="fixed inset-0 bg-black/40 z-50 flex items-center justify-center p-4">
-          <div className="bg-white rounded-[20px] w-full max-w-[1000px] max-h-[85vh] overflow-y-auto shadow-2xl">
-            <div className="flex justify-between items-center px-6 py-4 border-b bg-[#fafafa] sticky top-0 z-10">
-              <h2 className="text-[20px] font-bold">
-                Campaign Detail — {detailData.name}
-              </h2>
+      {/* DOWNLOAD REPORTS CARD */}
+      <div className="bg-white rounded-lg border border-[#e2e5ec] shadow-sm mt-4">
+        <div className="px-5 py-4 border-b border-[#eee]">
+          <h2 className="text-[14px] font-[600] text-black">Download Reports</h2>
+        </div>
 
-              <div className="flex items-center gap-2">
-                <button
-                  onClick={downloadReport}
-                  className="px-4 py-2 bg-green-600 hover:bg-green-700 text-white rounded-lg text-sm font-medium"
-                >
-                  Download Excel
-                </button>
-
-                <button
-                  onClick={() => setShowDetail(false)}
-                  className="text-[24px] text-gray-500"
-                >
-                  ×
-                </button>
-              </div>
-            </div>
-            <div className="p-6">
-              <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-5">
-                {[
-                  ["Total", detailData.total],
-                  ["Answered", detailData.success],
-                  ["No Answer", detailData.no_answer],
-                  ["Failed", detailData.failed],
-                  ["Invalid", detailData.invalid],
-                  ["Caller ID", detailData.caller_id],
-                  ["Job ID", detailData.job_id || "-"],
-                  ["Status", detailData.status],
-                  ["Voice File ID", detailData.voice_file_id || detailData.media_file_id || "-"],
-                ].map(([label, val], i) => (
-                  <div key={i} className="bg-gray-50 rounded-xl p-3">
-                    <p className="text-[12px] text-gray-500">{label}</p>
-                    <p className="text-[16px] font-bold">{val}</p>
-                  </div>
-                ))}
-              </div>
-
-              {/* REAL DISPOSITION DETAIL — from uploaded OBD report */}
-              {detailData.dispositions && detailData.dispositions.length > 0 ? (
-                <div className="mt-6">
-                  <h3 className="text-lg font-bold mb-3">
-                    Call Disposition Detail
-                    <span className="text-[12px] font-normal text-gray-400 ml-2">
-                      (imported from OBD report)
-                    </span>
-                  </h3>
-
-                  <div className="overflow-x-auto rounded-xl border border-gray-200">
-                    <table className="w-full min-w-[900px]">
-                      <thead className="bg-gray-50">
-                        <tr>
-                          {["Number", "Date", "Dial Time", "Answer Time", "End Time", "Duration", "Call Status", "Disposition", "Retry", "Pulse", "DTMF"].map((h) => (
-                            <th key={h} className="px-3 py-3 text-left border-b text-[12px] font-semibold text-gray-600 whitespace-nowrap">
-                              {h}
-                            </th>
-                          ))}
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {detailData.dispositions.map((d, i) => (
-                          <tr key={i} className="border-b hover:bg-gray-50">
-                            <td className="px-3 py-2 text-[13px]">{d.mobile}</td>
-                            <td className="px-3 py-2 text-[12px] text-gray-500 whitespace-nowrap">{d.call_date}</td>
-                            <td className="px-3 py-2 text-[12px] text-gray-500 whitespace-nowrap">{d.dial_time}</td>
-                            <td className="px-3 py-2 text-[12px] text-gray-500 whitespace-nowrap">{d.answered_time || "-"}</td>
-                            <td className="px-3 py-2 text-[12px] text-gray-500 whitespace-nowrap">{d.end_time}</td>
-                            <td className="px-3 py-2 text-[13px] font-semibold">{d.duration}s</td>
-                            <td className="px-3 py-2 text-[13px]">
-                              <span className={`px-2 py-1 rounded-full text-[11px] font-semibold ${d.call_status === "Success" ? "bg-green-100 text-green-700" : "bg-red-100 text-red-600"}`}>
-                                {d.call_status}
-                              </span>
-                            </td>
-                            <td className="px-3 py-2 text-[13px]">
-                              <span className={`px-2 py-1 rounded-full text-[11px] font-semibold ${dispositionBadge(d.disposition)}`}>
-                                {d.disposition}
-                              </span>
-                            </td>
-                            <td className="px-3 py-2 text-[13px]">{d.retry}</td>
-                            <td className="px-3 py-2 text-[13px]">{d.pulse}</td>
-                            <td className="px-3 py-2 text-[13px] font-bold">{d.dtmf_input || "-"}</td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
-                </div>
-              ) : (
-                <div className="mt-6 bg-yellow-50 border border-yellow-300 text-yellow-700 rounded-xl px-4 py-3 text-[13px]">
-                  {canUpload ? "" : ""}
-                </div>
-              )}
-
-              {detailData.responses && detailData.responses.length > 0 && (
-                <div className="mt-6">
-                  <h3 className="text-lg font-bold mb-3">
-                    IVR / DTMF Responses
-                  </h3>
-
-                  <div className="overflow-x-auto rounded-xl border border-gray-200">
-                    <table className="w-full">
-                      <thead className="bg-gray-50">
-                        <tr>
-                          <th className="px-4 py-3 text-left border-b">Mobile Number</th>
-                          <th className="px-4 py-3 text-left border-b">Pressed Key</th>
-                          <th className="px-4 py-3 text-left border-b">Response</th>
-                        </tr>
-                      </thead>
-                     <tbody>
-                        {detailData.responses.map((r, i) => (
-                          <tr key={i} className="border-b">
-                            <td className="px-4 py-2">{r.mobile}</td>
-                            <td className="px-4 py-2 font-bold">{r.dtmf}</td>
-                            <td className="px-4 py-2">
-                              {r.dtmf === "1"
-                                ? "Interested"
-                                : r.dtmf === "2"
-                                  ? "Call Back"
-                                  : r.dtmf === "3"
-                                    ? "Not Interested"
-                                    : `Pressed ${r.dtmf}`}
-                            </td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
-                </div>
-              )}
-            </div>
+        <div className="px-5 pt-4 flex items-center justify-end gap-3">
+          <span className="text-[13px] text-gray-500">Search:</span>
+          <div className="relative">
+            <Search size={14} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-gray-400" />
+            <input
+              type="text"
+              value={search}
+              onChange={(e) => { setSearch(e.target.value); setPage(1); }}
+              placeholder="Enter keyword"
+              className="w-[200px] h-[36px] border border-[#dcdfe6] rounded-md pl-8 pr-3 text-[13px] outline-none"
+            />
           </div>
         </div>
-      )}
+
+        <div className="px-5 py-4 overflow-x-auto">
+          <table className="w-full min-w-[900px]">
+            <thead>
+              <tr className="bg-[#f5f6f9]">
+                {["Request ID", "Request Date", "Start Date", "End Date", "Report Type", "Campaign Name", "Status", "Download"].map((h) => (
+                  <th key={h} className="px-3 py-3 text-left border-b border-[#eee]">
+                    <div className="flex items-center gap-1 text-[12px] font-[700] text-gray-700 whitespace-nowrap">
+                      {h}
+                      {h !== "Download" && <ChevronsUpDown size={12} className="text-gray-300" />}
+                    </div>
+                  </th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {paginated.length === 0 ? (
+                <tr><td colSpan="8" className="text-center py-10 text-[13px] text-gray-500">No data available in table</td></tr>
+              ) : paginated.map((row) => (
+                <tr key={row.id} className="hover:bg-[#fafbfc] duration-150">
+                  <td className="px-3 py-3 border-b border-[#f1f1f1] text-[12.5px] text-[#3d4b94] font-[600]">{row.id}</td>
+                  <td className="px-3 py-3 border-b border-[#f1f1f1] text-[12.5px] whitespace-nowrap">{row.request_date}</td>
+                  <td className="px-3 py-3 border-b border-[#f1f1f1] text-[12.5px] whitespace-nowrap">{row.start_date}</td>
+                  <td className="px-3 py-3 border-b border-[#f1f1f1] text-[12.5px] whitespace-nowrap">{row.end_date}</td>
+                  <td className="px-3 py-3 border-b border-[#f1f1f1] text-[12.5px]">{row.report_type}</td>
+                  <td className="px-3 py-3 border-b border-[#f1f1f1] text-[12.5px]">{row.campaign_name}</td>
+                  <td className="px-3 py-3 border-b border-[#f1f1f1] text-[12.5px]">{row.status}</td>
+                  <td className="px-3 py-3 border-b border-[#f1f1f1]">
+                    <button
+                      onClick={() => handleDownload(row)}
+                      className={`w-[30px] h-[30px] rounded-full flex items-center justify-center text-white ${
+                        row.status === "Report Generated" ? "bg-[#2fa84f] hover:bg-[#279144]" : "bg-[#e1483f] hover:bg-[#c93e36]"
+                      }`}
+                    >
+                      <Download size={14} />
+                    </button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+
+        {/* FOOTER */}
+        <div className="px-5 pb-5 flex items-center justify-between flex-wrap gap-3">
+          <div className="text-[12.5px] text-gray-500">
+            Showing {filteredRequests.length === 0 ? 0 : (page - 1) * showEntries + 1} to{" "}
+            {Math.min(page * showEntries, filteredRequests.length)} of {filteredRequests.length} entries
+          </div>
+          <div className="flex items-center gap-2">
+            <button onClick={() => setPage(1)} disabled={page === 1}
+              className="w-[30px] h-[30px] rounded-md border border-[#dcdfe6] text-gray-600 disabled:opacity-40 text-[12px]">«</button>
+            <button onClick={() => setPage((p) => Math.max(1, p - 1))} disabled={page === 1}
+              className="w-[30px] h-[30px] rounded-md border border-[#dcdfe6] text-gray-600 disabled:opacity-40 text-[12px]">‹</button>
+            {Array.from({ length: totalPages }, (_, i) => i + 1).slice(0, 4).map((p) => (
+              <button key={p} onClick={() => setPage(p)}
+                className={`w-[30px] h-[30px] rounded-md text-[12px] ${page === p ? "bg-[#3d4b94] text-white" : "border border-[#dcdfe6] text-gray-600"}`}>
+                {p}
+              </button>
+            ))}
+            <button onClick={() => setPage((p) => Math.min(totalPages, p + 1))} disabled={page === totalPages}
+              className="w-[30px] h-[30px] rounded-md border border-[#dcdfe6] text-gray-600 disabled:opacity-40 text-[12px]">›</button>
+            <button onClick={() => setPage(totalPages)} disabled={page === totalPages}
+              className="w-[30px] h-[30px] rounded-md border border-[#dcdfe6] text-gray-600 disabled:opacity-40 text-[12px]">»</button>
+            <select
+              value={showEntries}
+              onChange={(e) => { setShowEntries(Number(e.target.value)); setPage(1); }}
+              className="h-[30px] border border-[#dcdfe6] rounded-md px-2 text-[12px] outline-none ml-1"
+            >
+              <option value="10">10</option>
+              <option value="25">25</option>
+              <option value="50">50</option>
+            </select>
+          </div>
+        </div>
+      </div>
     </div>
   );
 };
 
-export default CampaignReoprts;
+export default OutboundReports;

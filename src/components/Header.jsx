@@ -2,42 +2,36 @@ import { useEffect, useState } from "react";
 import { NavLink, useNavigate, Outlet } from "react-router-dom";
 import { BASE } from "./api";
 
-import {
-  Sidebar,
-  Menu,
-  MenuItem,
-  SubMenu,
-} from "react-pro-sidebar";
-
-import { IoMenu } from "react-icons/io5";
+import { FaUserCircle } from "react-icons/fa";
 import { PiFileAudioBold } from "react-icons/pi";
 import { TbLivePhotoFilled } from "react-icons/tb";
 import { ImProfile } from "react-icons/im";
 import { TbReport } from "react-icons/tb";
 import { MdDashboard } from "react-icons/md";
 import { PiPhoneCallFill } from "react-icons/pi";
-import { BsFillPeopleFill } from "react-icons/bs";
+import { BsFillPeopleFill, BsBellFill } from "react-icons/bs";
 import { MdKeyboardArrowDown } from "react-icons/md";
-import { FiLogOut } from "react-icons/fi";
-import { FaWallet } from "react-icons/fa";
+import { FiLogOut, FiKey } from "react-icons/fi";
 import profile from "../assets/Images/profile.png";
+import obd from "../assets/Images/obd.png";
+import slide from "../assets/Images/slide.png"; 
 
+import { XMarkIcon } from "@heroicons/react/24/outline";
 
-import {
-  Dialog,
-  DialogPanel,
-} from "@headlessui/react";
-
-import {
-  Bars3Icon,
-  XMarkIcon,
-} from "@heroicons/react/24/outline";
+const ACCENT = "#3F51B5";
 
 export default function Header() {
 
-  const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
-  const [collapsed, setCollapsed] = useState(false);
+  // ✅ OBD icon isi panel ko open/close karta hai
+  const [sidebarMenuOpen, setSidebarMenuOpen] = useState(false);
+  // ✅ dropdown ke andar kaunsa section abhi expand hai (accordion)
+  const [openSection, setOpenSection] = useState(null);
+
   const [showProfile, setShowProfile] = useState(false);
+  // ✅ header panel (bell + credit + profile) toggle
+  const [showHeaderPanel, setShowHeaderPanel] = useState(false);
+  // ✅ credit amount reveal on click
+  const [showCreditAmount, setShowCreditAmount] = useState(false);
   const [currentUser, setCurrentUser] = useState(null);
   const navigate = useNavigate();
 
@@ -73,498 +67,284 @@ export default function Header() {
 
   };
 
+  // ✅ Sidebar sections — dropdown panel isi array se render hota hai.
+  const menuSections = [
+    // {
+    //   key: "dashboard",
+    //   label: "Dashboard",
+    //   icon: <MdDashboard />,
+    //   to: "/dashboard",
+    // },
+    {
+      key: "voicecampaign",
+      label: "Voice Campaign",
+      icon: <PiPhoneCallFill />,
+      children: [
+        { label: "Voice Campaign", to: "/voicecampaign" },
+      ],
+    },
+    {
+      key: "voicefile",
+      label: "Voice File",
+      icon: <PiFileAudioBold />,
+      children: [
+        { label: "Audio File", to: "/audiofile" },
+      ],
+    },
+    {
+      key: "managecampaign",
+      label: "Manage Campaign",
+      icon: <TbReport />,
+      children: [
+        { label: "My Campaign", to: "/campaignreports" },
+      ],
+    },
+    // {
+    //   key: "livereport",
+    //   label: "Live Report",
+    //   icon: <TbLivePhotoFilled />,
+    //   children: [
+    //     { label: "Credit History", to: "/credithistory" },
+    //   ],
+    // },
+    ...(role !== "user"
+      ? [{
+        key: "usermanagement",
+        label: "User Management",
+        icon: <BsFillPeopleFill />,
+        children: [
+          { label: "Add User", to: "/adduser" },
+          { label: "Manage User", to: "/manageuser" },
+        ],
+      }]
+      : []),
+    // {
+    //   key: "profile",
+    //   label: "Profile",
+    //   icon: <ImProfile />,
+    //   children: [
+    //     { label: "Change Password", to: "/changepassword" },
+    //   ],
+    // },
+  ];
+
+  const toggleSection = (key) => {
+    setOpenSection(openSection === key ? null : key);
+  };
+
+  const closeSidebarMenu = () => {
+    setSidebarMenuOpen(false);
+    setOpenSection(null);
+  };
+
   return (
 
     <div className="bg-[#f5f5f5] min-h-screen overflow-x-hidden">
 
       {/* HEADER */}
-      <header className="bg-white border-b border-[#efefef]">
+      <header className="bg-[#3F51B5]">
 
-        <nav className="flex items-center justify-between px-4 md:px-7 py-5">
+        <nav className="flex items-center justify-between px-4 md:px-6 py-2.5">
 
           {/* LEFT */}
-          <div className="flex items-center gap-4 md:gap-6">
+          <div className="flex items-center gap-3">
 
-            <h2 className="text-[15px] md:text-[19px] font-semibold text-[#666] tracking-wide whitespace-nowrap">
-              VOICECHANNEL.IN
-            </h2>
-
-            {/* MENU ICON */}
-            <button
-              onClick={() =>
-                setCollapsed(!collapsed)
-              }
-              className="text-[#EA7A9A] duration-300 hover:scale-105"
-            >
-
-              <IoMenu size={32} />
-
-            </button>
-
-            {/* TITLE */}
-            <div className="hidden md:block">
-
-              <h2 className="text-[24px] font-bold text-black leading-none">
-                Dashboard
-              </h2>
-
-              <p className="text-[#b9b1a9] text-[13px] mt-1 font-medium">
-                Welcome to InfraVoice !
-              </p>
-
-            </div>
+            {/* LOGO */}
+            <img
+              src={slide}
+              alt="Menu"
+              className=" w-[66px] h-[55px] object-contain"
+            />
 
           </div>
 
-          {/* RIGHT */}
-          <div className="hidden lg:flex items-center gap-5">
+          {/* RIGHT — single icon, clicking it opens the header panel */}
+          <div className="flex items-center relative">
 
-            {/* PROFILE BOX */}
-            <div className="relative">
+            <button
+              onClick={() => setShowHeaderPanel(!showHeaderPanel)}
+              className="w-[38px] h-[38px] rounded-full bg-white/10 hover:bg-white/20 flex items-center justify-center text-white duration-200"
+            >
+              <img
+                src={profile}
+                alt="profile"
+                className="w-[28px] h-[28px] rounded-full object-cover"
+              />
+            </button>
 
-              <div
-                onClick={() =>
-                  setShowProfile(
-                    !showProfile
-                  )
-                }
-                className="flex items-center gap-3 ml-2 cursor-pointer bg-[#fffafb] border border-[#ef7fa4] rounded-full py-2 pl-2 pr-5 hover:shadow-sm duration-300"
-              >
+            {/* HEADER PANEL — appears only after clicking the icon */}
+            {showHeaderPanel && (
 
-                {/* IMAGE */}
-                <img
-                  src={profile}
-                  alt="profile"
-                  className="w-[55px] h-[55px] rounded-full object-cover border border-[#ef7fa4]"
-                />
+              <div className="absolute right-0 top-[48px] w-[280px] bg-white border border-gray-200 rounded-xl overflow-hidden shadow-xl z-50">
 
-                {/* NAME */}
-                <div>
-
-                  <h2 className="text-[#2f3778] text-[18px] font-[700] leading-none">
-                    {currentUser?.username || "InfraVoice"}
-                  </h2>
-
-                  <p className="text-[#EA7A9A] text-[13px] mt-1 font-medium capitalize">
-                    {role}
+                {/* TOP */}
+                <div className="px-4 py-3 border-b border-gray-100 flex items-center justify-between">
+                  <p className="text-[14px] font-semibold text-gray-800">
+                    Welcome {currentUser?.username || "InfraVoice"}
                   </p>
-
+                  <button
+                    onClick={() => setShowHeaderPanel(false)}
+                    className="text-gray-400 hover:text-gray-600"
+                  >
+                    <XMarkIcon className="w-4" />
+                  </button>
                 </div>
+
+                {/* BELL / NOTIFICATIONS */}
+                <div className="flex items-center gap-3 px-4 py-3 text-[14px] text-gray-700 border-b border-gray-100">
+                  <span className="relative">
+                    <BsBellFill size={16} className="text-[#3F51B5]" />
+                    <span className="absolute -top-1 -right-1 w-[7px] h-[7px] rounded-full bg-red-500" />
+                  </span>
+                  Notifications
+                </div>
+
+                {/* CREDITS — click to reveal how much credit is available */}
+                <button
+                  onClick={() => setShowCreditAmount(!showCreditAmount)}
+                  className="w-full flex items-center justify-between px-4 py-3 text-[14px] text-gray-700 hover:bg-gray-50 border-b border-gray-100"
+                >
+                  <span>Credits</span>
+                  <span className="font-semibold text-[#3F51B5]">
+                    {showCreditAmount ? `₹ ${currentCredit}` : "View"}
+                  </span>
+                </button>
+
+                {showCreditAmount && (
+                  <NavLink
+                    to="/credithistory"
+                    onClick={() => {
+                      setShowHeaderPanel(false);
+                      setShowCreditAmount(false);
+                    }}
+                    className="block px-4 py-2 text-[13px] text-[#3F51B5] hover:underline border-b border-gray-100"
+                  >
+                    View Credit History
+                  </NavLink>
+                )}
+
+                {/* CHANGE PASSWORD */}
+                <NavLink
+                  to="/changepassword"
+                  onClick={() => setShowHeaderPanel(false)}
+                  className="flex items-center gap-3 px-4 py-3 text-[14px] text-gray-700 hover:bg-gray-50"
+                >
+                  <FiKey size={16} className="text-[#3F51B5]" />
+                  Change Password
+                </NavLink>
+
+                {/* LOGOUT */}
+                <button
+                  onClick={handleLogout}
+                  className="w-full flex items-center gap-3 px-4 py-3 text-[14px] text-gray-700 hover:bg-gray-50 border-t border-gray-100"
+                >
+                  <FiLogOut size={16} className="text-[#3F51B5]" />
+                  Logout
+                </button>
 
               </div>
 
-              {/* DROPDOWN */}
-              {showProfile && (
-
-                <div className="absolute right-0 top-[82px] w-[320px] bg-white border border-[#ef7fa4] rounded-[26px] overflow-hidden shadow-xl z-50">
-
-                  {/* TOP */}
-                  <div className="bg-[#fffafb] px-3 py-3 border-b border-[#f3d3dc]">
-
-                    <div className="flex items-center gap-4">
-
-                      <img
-                        src={profile}
-                        alt="profile"
-                        className="w-[70px] h-[70px] rounded-full border border-[#ef7fa4]"
-                      />
-
-                      <div>
-
-                        <h1 className="text-[22px] font-[700] text-[#2f3778]">
-                          {currentUser?.username || "InfraVoice"}
-                        </h1>
-
-                        <p className="text-[#EA7A9A] text-[14px] capitalize mt-1">
-                          {role}
-                        </p>
-
-                      </div>
-
-                    </div>
-
-                  </div>
-
-                  {/* CREDIT */}
-                  <div className="px-4 py-3">
-
-                    <div className="bg-[#fffafb] border border-[#ef7fa4] rounded-[22px] p-3">
-
-                      <div className="flex items-center gap-4">
-
-                        {/* ICON */}
-                        <div className="w-[58px] h-[58px] rounded-2xl bg-[#EA7A9A] flex items-center justify-center">
-
-                          <FaWallet
-                            size={24}
-                            className="text-white"
-                          />
-
-                        </div>
-
-                        {/* CREDIT */}
-                        <div>
-
-                          <p className="text-[13px] text-gray-500 font-medium">
-                            Available Credit
-                          </p>
-
-                          <h1 className="text-[24px] font-[800] text-[#EA7A9A] leading-none mt-1">
-                            ₹ {Number(currentCredit).toLocaleString()}
-                          </h1>
-
-                        </div>
-
-                      </div>
-
-                    </div>
-
-                    {/* LOGOUT */}
-                    <button
-                      onClick={handleLogout}
-                      className="w-full h-[54px] rounded-2xl bg-[#EA7A9A] hover:bg-[#e3688b] duration-300 text-white text-[15px] font-semibold flex items-center justify-center gap-3 mt-5"
-                    >
-
-                      <FiLogOut size={18} />
-
-                      Logout
-
-                    </button>
-
-                  </div>
-
-                </div>
-
-              )}
-
-            </div>
-
-          </div>
-
-          {/* MOBILE */}
-          <div className="lg:hidden">
-
-            <button
-              onClick={() =>
-                setMobileMenuOpen(true)
-              }
-            >
-
-              <Bars3Icon className="w-7" />
-
-            </button>
+            )}
 
           </div>
 
         </nav>
-
-        {/* MOBILE MENU */}
-        <Dialog
-          open={mobileMenuOpen}
-          onClose={setMobileMenuOpen}
-        >
-
-          <DialogPanel className="fixed inset-y-0 right-0 w-full bg-white p-6 z-50 overflow-y-auto">
-
-            <div className="flex justify-between items-center">
-
-              <h2 className="font-bold text-xl">
-                Menu
-              </h2>
-
-              <button
-                onClick={() =>
-                  setMobileMenuOpen(false)
-                }
-              >
-
-                <XMarkIcon className="w-6" />
-
-              </button>
-
-            </div>
-
-            {/* MOBILE PROFILE */}
-            <div className="mt-7 bg-[#fffafb] border border-[#ef7fa4] rounded-[24px] p-5">
-
-              <div className="flex items-center gap-4">
-
-                <img
-                  src={profile}
-                  alt="profile"
-                  className="w-[65px] h-[65px] rounded-full border border-[#ef7fa4]"
-                />
-
-                <div>
-
-                  <h2 className="text-[22px] font-[700] text-[#2f3778]">
-                    {currentUser?.username || "InfraVoice"}
-                  </h2>
-
-                  <p className="text-[#EA7A9A] text-[14px] capitalize">
-                    {role}
-                  </p>
-
-                </div>
-
-              </div>
-
-              {/* CREDIT */}
-              <div className="mt-5 bg-white border border-[#ef7fa4] rounded-[20px] p-4">
-
-                <p className="text-[13px] text-gray-500">
-                  Available Credit
-                </p>
-
-                <h1 className="text-[30px] font-[800] text-[#EA7A9A] mt-1">
-                  ₹ {currentCredit}
-                </h1>
-
-              </div>
-
-              {/* LOGOUT */}
-              <button
-                onClick={handleLogout}
-                className="w-full h-[50px] rounded-2xl bg-[#EA7A9A] text-white text-[15px] font-semibold mt-5"
-              >
-
-                Logout
-
-              </button>
-
-            </div>
-
-            {/* MENU */}
-            <div className="mt-8 flex flex-col gap-5">
-
-              <NavLink to="/dashboard">
-                Dashboard
-              </NavLink>
-
-              <NavLink to="/voicecampaign">
-                Voice Campaign
-              </NavLink>
-
-              <NavLink to="/audiofile">
-                Voice File
-              </NavLink>
-
-              <NavLink to="/campaignreports">
-                Manage Campaign
-              </NavLink>
-
-              <NavLink to="/schedulereport">
-                Live Report
-              </NavLink>
-
-              {role !== "user" && (
-                <>
-                  <NavLink to="/adduser">
-                    Add User
-                  </NavLink>
-
-                  <NavLink to="/manageuser">
-                    Manage User
-                  </NavLink>
-                </>
-              )}
-
-            </div>
-
-          </DialogPanel>
-
-        </Dialog>
 
       </header>
 
       {/* MAIN */}
       <div className="flex">
 
-        {/* SIDEBAR */}
-        <div
-          className={`${collapsed
-            ? "w-[90px]"
-            : "w-[280px]"
-            } duration-300`}
-        >
+        {/* ✅ LEFT ICON COLUMN — hamesha visible: User, OBD (cloud) */}
+        <div className="w-[100px] shrink-0 bg-white border-r border-gray-200 flex flex-col items-center py-5 gap-6 h-[calc(100vh-53px)] relative">
 
-          <Sidebar
-            collapsed={collapsed}
-            width="100%"
-            rootStyles={{
-              height: "100vh",
-              border: "none",
-
-              ".ps-sidebar-container":
-              {
-                backgroundColor:
-                  "#fff",
-              },
-            }}
+          {/* USER ICON */}
+          <button
+            onClick={() => setSidebarMenuOpen(!sidebarMenuOpen)}
+            className="flex flex-col items-center gap-1 text-[#3F51B5]"
           >
+            <FaUserCircle size={22} />
+            <span className="text-[11px] font-medium text-gray-700">User</span>
+          </button>
 
-            <Menu>
+          {/* OBD / CLOUD ICON */}
+          <div className="relative">
 
-              {/* DASHBOARD */}
-              <MenuItem
-                icon={<MdDashboard />}
-                component={
-                  <NavLink to="/dashboard" />
-                }
-                className={({
-                  isActive,
-                }) =>
-                  isActive
-                    ? "activeMenu dashboardMenu"
-                    : "dashboardMenu"
-                }
-              >
-                Dashboard
-              </MenuItem>
+            <button
+              onClick={() => setSidebarMenuOpen(!sidebarMenuOpen)}
+              className="flex flex-col items-center gap-1"
+            >
+              <img src={obd} alt="OBD" className="w-6 h-6 object-contain" />
+              <span className="text-[11px] font-medium text-gray-700">OBD</span>
+            </button>
 
-              {/* VOICE */}
-              <SubMenu
-                label="Voice Campaign"
-                icon={
-                  <PiPhoneCallFill />
-                }
-                suffix={
-                  <MdKeyboardArrowDown />
-                }
-                className="submenuStyle"
-              >
+            {/* ✅ DROPDOWN — ab compact box hai, fixed max-height + scrollbar (scroll type) */}
+            {sidebarMenuOpen && (
+              <>
+                {/* backdrop — bahar click karne pe dropdown band ho jaye */}
+                <div
+                  className="fixed inset-0 z-40"
+                  onClick={closeSidebarMenu}
+                />
 
-                <MenuItem
-                  component={
-                    <NavLink to="/voicecampaign" />
-                  }
-                >
-                  Voice Campaign
-                </MenuItem>
+                <div className="absolute left-[47px] mt-[-125px] w-[220px] max-h-[250px] overflow-y-auto bg-white border border-gray-200 rounded-xl shadow-xl z-50">
 
-              </SubMenu>
+                  {menuSections.map((section) => (
 
-              {/* AUDIO */}
-              <SubMenu
-                label="Voice File"
-                icon={
-                  <PiFileAudioBold />
-                }
-                suffix={
-                  <MdKeyboardArrowDown />
-                }
-                className="submenuStyle"
-              >
+                    <div key={section.key} className="border-b border-gray-100 last:border-b-0">
 
-                <MenuItem
-                  component={
-                    <NavLink to="/audiofile" />
-                  }
-                >
-                  Audio File
-                </MenuItem>
+                      {section.to ? (
+                        <NavLink
+                          to={section.to}
+                          onClick={closeSidebarMenu}
+                          className="flex items-center gap-3 px-4 py-3 text-[11px] font-medium text-gray-700 hover:bg-gray-50"
+                        >
+                          <span className="text-[#3F51B5]">{section.icon}</span>
+                          {section.label}
+                        </NavLink>
+                      ) : (
+                        <>
+                          <button
+                            onClick={() => toggleSection(section.key)}
+                            className="w-full flex items-center justify-between px-4 py-3 text-[11px] font-medium text-gray-700 hover:bg-gray-50"
+                          >
+                            <span className="flex items-center gap-3">
+                              <span className="text-[#3F51B5]">{section.icon}</span>
+                              {section.label}
+                            </span>
+                            <MdKeyboardArrowDown
+                              size={16}
+                              className={`text-gray-400 transition-transform duration-200 ${openSection === section.key ? "rotate-180" : ""
+                                }`}
+                            />
+                          </button>
 
-              </SubMenu>
+                          {openSection === section.key && (
+                            <div className="bg-gray-50">
+                              {section.children.map((child) => (
+                                <NavLink
+                                  key={child.to}
+                                  to={child.to}
+                                  onClick={closeSidebarMenu}
+                                  className="block pl-11 pr-4 py-2.5 text-[11px] text-gray-600 hover:text-[#3F51B5] hover:bg-gray-100"
+                                >
+                                  {child.label}
+                                </NavLink>
+                              ))}
+                            </div>
+                          )}
+                        </>
+                      )}
 
-              {/* REPORT */}
-              <SubMenu
-                label="Manage Campaign"
-                icon={<TbReport />}
-                suffix={
-                  <MdKeyboardArrowDown />
-                }
-                className="submenuStyle"
-              >
+                    </div>
 
-                <MenuItem
-                  component={
-                    <NavLink to="/campaignreports" />
-                  }
-                >
-                  My Campaign
-                </MenuItem>
+                  ))}
 
-              </SubMenu>
+                </div>
+              </>
+            )}
 
-              {/* LIVE */}
-              <SubMenu
-                label="Live Report"
-                icon={
-                  <TbLivePhotoFilled />
-                }
-                suffix={
-                  <MdKeyboardArrowDown />
-                }
-                className="submenuStyle"
-              >
-
-                <MenuItem
-                  component={
-                    <NavLink to="/credithistory" />
-                  }
-                >
-                  Credit History
-                </MenuItem>
-
-              </SubMenu>
-
-              {/* USER */}
-              {role !== "user" && (
-
-                <SubMenu
-                  label="User Management"
-                  icon={
-                    <BsFillPeopleFill />
-                  }
-                  suffix={
-                    <MdKeyboardArrowDown />
-                  }
-                  className="submenuStyle"
-                >
-
-                  <MenuItem
-                    component={
-                      <NavLink to="/adduser" />
-                    }
-                  >
-                    Add User
-                  </MenuItem>
-
-                  <MenuItem
-                    component={
-                      <NavLink to="/manageuser" />
-                    }
-                  >
-                    Manage User
-                  </MenuItem>
-
-                </SubMenu>
-
-              )}
-
-              {/* PROFILE */}
-              <SubMenu
-                label="Profile"
-                icon={<ImProfile />}
-                suffix={
-                  <MdKeyboardArrowDown />
-                }
-                className="submenuStyle"
-              >
-
-                <MenuItem
-                  component={
-                    <NavLink to="/changepassword" />
-                  }
-                >
-                  Change Password
-                </MenuItem>
-
-              </SubMenu>
-
-            </Menu>
-
-          </Sidebar>
+          </div>
 
         </div>
 
@@ -574,105 +354,6 @@ export default function Header() {
         </div>
 
       </div>
-
-      {/* CSS */}
-      <style>{`
-
-.dashboardMenu > .ps-menu-button:hover{
-  background:#EA7A9A !important;
-  color:white !important;
-  border-radius:30px !important;
-}
-
-.dashboardMenu > .ps-menu-button:hover .ps-menu-icon{
-  color:white !important;
-}
-
-.dashboardMenu:hover .ps-menu-button{
-  background:#EA7A9A !important;
-  color:white !important;
-  border-radius:30px !important;
-}
-
-.dashboardMenu:hover .ps-menu-icon{
-  color:white !important;
-}
-
-.activeMenu .ps-menu-button{
-  background:#EA7A9A !important;
-  color:white !important;
-  border-radius:30px !important;
-}
-
-.activeMenu .ps-menu-icon{
-  color:white !important;
-}
-
-.ps-menu-button{
-  height:52px !important;
-  border-radius:14px !important;
-  margin:6px 10px !important;
-  font-size:15px !important;
-  font-weight:500 !important;
-  color:#333 !important;
-  transition:0.35s ease !important;
-}
-
-.ps-menu-button:hover{
-  color:#EA7A9A !important;
-  background:transparent !important;
-}
-
-.ps-menu-button:hover .ps-menu-icon{
-  color:#EA7A9A !important;
-}
-
-.ps-submenu-root > .ps-menu-button:hover{
-  background:#EA7A9A !important;
-  color:white !important;
-  border-radius:30px !important;
-}
-
-.ps-submenu-root > .ps-menu-button:hover .ps-menu-icon{
-  color:white !important;
-}
-
-.ps-submenu-root > .ps-menu-button:hover .ps-submenu-expand-icon{
-  color:white !important;
-}
-
-.ps-submenu-root.ps-open > .ps-menu-button{
-  background:#EA7A9A !important;
-  color:white !important;
-  border-radius:30px !important;
-}
-
-.ps-submenu-root.ps-open > .ps-menu-button .ps-menu-icon{
-  color:white !important;
-}
-
-.ps-submenu-root.ps-open > .ps-menu-button .ps-submenu-expand-icon{
-  color:white !important;
-}
-
-.ps-menu-icon{
-  font-size:18px !important;
-  color:#666 !important;
-  transition:0.3s;
-}
-
-.ps-submenu-content{
-  background:#fff !important;
-  border-radius:10px;
-  margin:0 8px;
-}
-
-.ps-submenu-expand-icon{
-  color:#888 !important;
-  transition:0.3s;
-}
-
-`}</style>
 
     </div>
 

@@ -1,47 +1,125 @@
-import React, { useEffect, useState } from "react";
-import { FaUsers, FaPaperPlane, FaLayerGroup, FaCalendarAlt } from "react-icons/fa";
-import { AlertCircle, CheckCircle2, Loader2 } from "lucide-react";
+import React, { useState, useEffect, useRef } from "react";
+import * as XLSX from "xlsx";
+import {
+  ChevronDown,
+  ChevronUp,
+  Plus,
+  X,
+  FileSpreadsheet,
+  Loader2,
+  AlertCircle,
+  CheckCircle2,
+} from "lucide-react";
 import { BASE } from "../api";
 
-export default function VoiceCampaign() {
+/**
+ * Rebuilt to match the "Create Campaign" layout from the reference screenshot:
+ * left = single-column form, right = collapsible File / SMS / Test Call panels.
+ *
+ * A few fields weren't fully visible in the screenshot (values shown, but not
+ * every state/behavior), so reasonable assumptions were made — flagged below
+ * and again in chat:
+ *  - "Call Type" (OBD Campaign) replaces the old Voice Plan dropdown and is
+ *    still sent as `plan_id` (obd -> "2", ivr -> "1").
+ *  - "Additional CallerID" is optional, sent as `additional_caller_id`.
+ *  - "SMS" panel is a simple toggle + message, sent as `sms_enabled` / `sms_message`.
+ *  - "Campaign Expire Time" is sent as `expire_at`, defaults to today 20:59:00.
+ *  - "Test Call" panel is a single row (label + input + Dial button), matching
+ *    the screenshot exactly, and is expanded by default.
+ */
 
-  const [numbers, setNumbers] = useState("");
-  const [campaignName, setCampaignName] = useState(
-    `${new Date().toLocaleDateString()}-${new Date().getHours()}:${new Date().getMinutes()}`
+const ACCENT = "#3F51B5";
+
+const pad = (n) => String(n).padStart(2, "0");
+const defaultExpireTime = () => {
+  const d = new Date();
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} 20:59:00`;
+};
+
+function Section({ title, isOpen, onToggle, children }) {
+  return (
+    <div className="bg-white border border-gray-200 border-l-3 border-l-[#3F51B5] border-t-3 border-t-[#dfe0e4] border-b-3 border-b-[#dfe0e4] rounded-lg overflow-hidden">
+      <button
+        type="button"
+        onClick={onToggle}
+        className="w-full flex items-center justify-between px-5 py-4 text-left"
+      >
+        <span className="font-semibold text-gray-800 text-[15px]">{title}</span>
+        {isOpen ? (
+          <ChevronUp size={18} className="text-gray-500" />
+        ) : (
+          <ChevronDown size={18} className="text-gray-500" />
+        )}
+      </button>
+      {isOpen && (
+        <div className="px-5 pb-5 pt-1 border-t border-gray-100">{children}</div>
+      )}
+    </div>
   );
+}
+
+function Radio({ checked, onChange, label }) {
+  return (
+    <label className="inline-flex items-center gap-2 cursor-pointer select-none">
+      <input
+        type="radio"
+        checked={checked}
+        onChange={onChange}
+        style={{ accentColor: ACCENT }}
+        className="w-[18px] h-[18px]"
+      />
+      <span className="text-[14px] text-gray-700">{label}</span>
+    </label>
+  );
+}
+
+export default function VoiceCampaign() {
+  // ---- core fields ----
+  const [creditType, setCreditType] = useState("trans"); // trans | promo
   const [callerId, setCallerId] = useState("");
   const [callerIds, setCallerIds] = useState([]);
+  const [additionalCallerId, setAdditionalCallerId] = useState("");
+  const [campaignType, setCampaignType] = useState("obd"); // obd | ivr
+  const [campaignName, setCampaignName] = useState("");
   const [mediaFiles, setMediaFiles] = useState([]);
   const [selectedMediaId, setSelectedMediaId] = useState("");
-
-  const [showConfirm, setShowConfirm] = useState(false);
-  const [loading, setLoading] = useState(false);
-
-  const [callType, setCallType] = useState("2");
-  const [voicePlan, setVoicePlan] = useState("2");
   const [retryAttempt, setRetryAttempt] = useState("0");
   const [retryDuration, setRetryDuration] = useState("0");
-
-  const [showUploadPopup, setShowUploadPopup] = useState(false);
-  const [showGroupPopup, setShowGroupPopup] = useState(false);
-  const [showTestPopup, setShowTestPopup] = useState(false);
-  const [showSchedulePopup, setShowSchedulePopup] = useState(false);
-
-  const [testNumber, setTestNumber] = useState("");
-  const [uploadFile, setUploadFile] = useState(null);
-  const [fromRange, setFromRange] = useState(0);
-  const [toRange, setToRange] = useState(0);
+  const [scheduleMode, setScheduleMode] = useState("now"); // now | later | calendar
+  const [laterMinutes, setLaterMinutes] = useState("15");
   const [scheduleDate, setScheduleDate] = useState("");
   const [scheduleTime, setScheduleTime] = useState("");
-  const [scheduleLoading, setScheduleLoading] = useState(false);
+  const [expireTime, setExpireTime] = useState(defaultExpireTime());
+
+  // ---- numbers (from uploaded file) ----
+  const [numbers, setNumbers] = useState([]);
+  const [uploadFileType, setUploadFileType] = useState("excel"); // excel | csv | text
+  const [uploadedFileName, setUploadedFileName] = useState("");
+  const fileInputRef = useRef(null);
+
+  // ---- sms panel ----
+  const [smsEnabled, setSmsEnabled] = useState(false);
+  const [smsMessage, setSmsMessage] = useState("");
+
+  // ---- test call panel ----
+  const [testNumber, setTestNumber] = useState("");
   const [testCallLoading, setTestCallLoading] = useState(false);
 
-  // ── PREMIUM POPUP (replaces alert()) ──
+  // ---- collapsibles ----
+  // File + Test Call open by default, SMS collapsed — matches reference screenshot
+  const [openPanels, setOpenPanels] = useState({ file: true, sms: false, test: true });
+  const togglePanel = (key) => setOpenPanels((p) => ({ ...p, [key]: !p[key] }));
+
+  // ---- run state ----
+  const [loading, setLoading] = useState(false);
+  const [showConfirm, setShowConfirm] = useState(false);
+
+  // ---- result popup ----
   const [popup, setPopup] = useState(false);
-  const [popupType, setPopupType] = useState("success"); // "success" | "error"
+  const [popupType, setPopupType] = useState("success");
   const [popupTitle, setPopupTitle] = useState("");
   const [popupMsg, setPopupMsg] = useState("");
-  const [popupStats, setPopupStats] = useState(null); // [[label, value], ...] optional grid
+  const [popupStats, setPopupStats] = useState(null);
 
   const showPopup = (t, title, m, stats = null) => {
     setPopupType(t);
@@ -51,46 +129,8 @@ export default function VoiceCampaign() {
     setPopup(true);
   };
 
-  const groups = [
-    { name: "Demo Group", total: 150 },
-    { name: "Customer Group", total: 350 },
-  ];
-
   const userId = () => sessionStorage.getItem("user_id");
 
-  // ==============================
-  // NUMBER FORMATTING HELPERS
-  // ==============================
-  const formatNumbers = (raw) => {
-    const cleaned = raw.replace(/[^\d,]/g, "");
-    const parts = cleaned.split(",");
-    const result = [];
-    parts.forEach((part) => {
-      if (part.length > 10) {
-        for (let i = 0; i < part.length; i += 10) {
-          result.push(part.slice(i, i + 10));
-        }
-      } else {
-        result.push(part);
-      }
-    });
-    return result.join(",");
-  };
-
-  const getValidNumbers = (raw) =>
-    [...new Set(raw.split(",").map((n) => n.trim()).filter((n) => /^\d{10}$/.test(n)))];
-
-  const handleNumbersChange = (e) => {
-    setNumbers(formatNumbers(e.target.value));
-  };
-
-  const handleNumbersBlur = () => {
-    setNumbers(getValidNumbers(numbers).join(","));
-  };
-
-  // ==============================
-  // LOAD ON MOUNT
-  // ==============================
   useEffect(() => {
     loadMediaFiles();
     loadCallerIds();
@@ -101,7 +141,9 @@ export default function VoiceCampaign() {
       const res = await fetch(`${BASE}/get-media-files/?user_id=${userId()}&only_approved=true`);
       const data = await res.json();
       setMediaFiles(Array.isArray(data) ? data : []);
-    } catch (err) { console.log("Media load error:", err); }
+    } catch (err) {
+      console.log("Media load error:", err);
+    }
   };
 
   const loadCallerIds = async () => {
@@ -109,62 +151,231 @@ export default function VoiceCampaign() {
       const res = await fetch(`${BASE}/get-caller-ids/?user_id=${userId()}`);
       const data = await res.json();
       setCallerIds(Array.isArray(data) ? data : []);
-      if (Array.isArray(data) && data.length > 0) {
-        setCallerId(data[0].number);
-      }
-    } catch (err) { console.log("Caller ID load error:", err); }
+    } catch (err) {
+      console.log("Caller ID load error:", err);
+    }
   };
 
   // ==============================
-  // CSV → NUMBERS
+  // FILE UPLOAD -> NUMBERS
   // ==============================
-  const handleFileUpload = () => {
-    if (!uploadFile) { showPopup("error", "Error", "Please select a file"); return; }
-    const reader = new FileReader();
-    reader.onload = (e) => {
-      const text = e.target.result;
-      const lines = text.split("\n").map(l => l.trim()).filter(Boolean);
-      const nums = lines.map(line => line.split(",")[0].trim()).filter(n => /^\d{10}$/.test(n));
-      if (nums.length > 0) {
-        const merged = [...new Set(
-          (numbers ? numbers.split(",").concat(nums) : nums)
-            .map(n => n.trim())
-            .filter(n => /^\d{10}$/.test(n))
-        )];
-        setNumbers(merged.join(","));
-        showPopup("success", "Loaded", `${nums.length} valid numbers loaded`);
-        setShowUploadPopup(false);
+  const extractValidNumbers = (rawList) => [
+    ...new Set(
+      rawList
+        .map((n) => String(n).replace(/\D/g, "").trim())
+        .filter((n) => /^\d{10}$/.test(n))
+    ),
+  ];
+
+  const acceptFor = (type) =>
+    type === "excel" ? ".xlsx,.xls" : type === "csv" ? ".csv" : ".txt";
+
+  const handleChooseClick = () => fileInputRef.current?.click();
+
+  const handleFileSelected = async (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setUploadedFileName(file.name);
+
+    try {
+      let rawValues = [];
+      if (uploadFileType === "excel" || /\.(xlsx|xls)$/i.test(file.name)) {
+        const buf = await file.arrayBuffer();
+        const wb = XLSX.read(buf, { type: "array" });
+        const sheet = wb.Sheets[wb.SheetNames[0]];
+        const rows = XLSX.utils.sheet_to_json(sheet, { header: 1 });
+        rawValues = rows.map((r) => r[0]).filter(Boolean);
       } else {
-        showPopup("error", "Error", "No valid 10-digit numbers found in this file");
+        const text = await file.text();
+        rawValues = text
+          .split("\n")
+          .map((l) => l.split(",")[0])
+          .filter(Boolean);
       }
-    };
-    reader.readAsText(uploadFile);
+      const valid = extractValidNumbers(rawValues);
+      if (valid.length === 0) {
+        showPopup("error", "No Numbers Found", "No valid 10 digit numbers were found in this file.");
+        return;
+      }
+      setNumbers(valid);
+      showPopup("success", "File Loaded", `${valid.length} valid numbers loaded from ${file.name}`);
+    } catch (err) {
+      showPopup("error", "Error", "Could not read this file. Please check the format and try again.");
+    }
+  };
+
+  const handleCancelFile = () => {
+    setUploadedFileName("");
+    setNumbers([]);
+    if (fileInputRef.current) fileInputRef.current.value = "";
+  };
+
+  const downloadSampleFile = () => {
+    const csv = "Mobile Number\n9876543210\n9123456780\n";
+    const blob = new Blob([csv], { type: "text/csv" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = "sample-numbers.csv";
+    a.click();
+    URL.revokeObjectURL(url);
+  };
+
+  // ==============================
+  // PAYLOAD + RUN
+  // ==============================
+  const basePayload = () => ({
+    user_id: userId(),
+    numbers,
+    media_file_id: selectedMediaId,
+    caller_id: callerId,
+    additional_caller_id: additionalCallerId || undefined,
+    plan_id: campaignType === "obd" ? "2" : "1",
+    call_type: creditType === "trans" ? "2" : "1",
+    campaign_name: campaignName,
+    retry_attempt: retryAttempt,
+    retry_duration: retryDuration,
+    expire_at: expireTime,
+    sms_enabled: smsEnabled,
+    sms_message: smsEnabled ? smsMessage : undefined,
+  });
+
+  const validateBeforeRun = () => {
+    if (!callerId) return "Please select a Caller ID";
+    if (!campaignName.trim()) return "Please enter a Campaign Name";
+    if (numbers.length === 0) return "Please upload a file with valid numbers";
+    if (!selectedMediaId) return "Please select a Voice File";
+    if (scheduleMode === "calendar" && (!scheduleDate || !scheduleTime))
+      return "Please select a schedule date and time";
+    return null;
+  };
+
+  const handleRunClick = () => {
+    const err = validateBeforeRun();
+    if (err) {
+      showPopup("error", "Missing Information", err);
+      return;
+    }
+    if (scheduleMode === "now") {
+      setShowConfirm(true);
+    } else {
+      runCampaign();
+    }
+  };
+
+  const resetAfterSend = () => {
+    setNumbers([]);
+    setUploadedFileName("");
+    setSelectedMediaId("");
+    setCampaignName("");
+  };
+
+  const runCampaign = async () => {
+    setShowConfirm(false);
+    setLoading(true);
+    try {
+      if (scheduleMode === "now") {
+        const res = await fetch(`${BASE}/send-bulk-voice/`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(basePayload()),
+        });
+        const data = await res.json();
+        if (data.status === "done") {
+          showPopup(
+            "success",
+            "Campaign Sent! 🚀",
+            "Your voice campaign has been dispatched successfully.",
+            [
+              ["Total", data.total],
+              ["Success", data.success],
+              ["Failed", data.failed],
+              ["Invalid", data.invalid],
+            ]
+          );
+          resetAfterSend();
+        } else if (data.status === "pending") {
+          showPopup(
+            "success",
+            "Campaign Pending ⏳",
+            "Large campaign received. It will complete in approximately 8-10 minutes.",
+            [
+              ["Total Numbers", data.total],
+              ["Status", "Pending"],
+            ]
+          );
+          resetAfterSend();
+        } else {
+          showPopup("error", "Error", data.message || "Something went wrong");
+        }
+      } else {
+        let scheduled_at;
+        if (scheduleMode === "later") {
+          scheduled_at = new Date(Date.now() + Number(laterMinutes) * 60000).toISOString();
+        } else {
+          scheduled_at = `${scheduleDate}T${scheduleTime}`;
+        }
+        const res = await fetch(`${BASE}/schedule-campaign/`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ ...basePayload(), scheduled_at }),
+        });
+        const data = await res.json();
+        if (data.status === "scheduled") {
+          showPopup(
+            "success",
+            "Campaign Scheduled! ✅",
+            "Your campaign has been scheduled successfully.",
+            [["Total Numbers", data.total]]
+          );
+          resetAfterSend();
+        } else {
+          showPopup("error", "Error", data.message || "Something went wrong");
+        }
+      }
+    } catch {
+      showPopup("error", "Network Error", "Please check your connection and try again");
+    }
+    setLoading(false);
   };
 
   // ==============================
   // TEST CALL
   // ==============================
   const handleTestCall = async () => {
-    if (!/^\d{10}$/.test(testNumber)) { showPopup("error", "Error", "Enter a valid 10 digit number"); return; }
-    if (!selectedMediaId) { showPopup("error", "Error", "Select Voice File"); return; }
-    if (!callerId) { showPopup("error", "Error", "Select Caller ID"); return; }
+    if (!/^\d{10}$/.test(testNumber)) {
+      showPopup("error", "Error", "Enter a valid 10 digit number");
+      return;
+    }
+    if (!selectedMediaId) {
+      showPopup("error", "Error", "Select a Voice File in the form first");
+      return;
+    }
+    if (!callerId) {
+      showPopup("error", "Error", "Select a Caller ID in the form first");
+      return;
+    }
+    setTestCallLoading(true);
     try {
-      setTestCallLoading(true);
       const res = await fetch(`${BASE}/send-bulk-voice/`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          user_id: userId(), numbers: [testNumber],
-          media_file_id: selectedMediaId, caller_id: callerId,
-          plan_id: voicePlan, call_type: callType,
+          user_id: userId(),
+          numbers: [testNumber],
+          media_file_id: selectedMediaId,
+          caller_id: callerId,
+          plan_id: campaignType === "obd" ? "2" : "1",
+          call_type: creditType === "trans" ? "2" : "1",
           campaign_name: "Test Call",
-          retry_attempt: retryAttempt, retry_duration: retryDuration,
+          retry_attempt: retryAttempt,
+          retry_duration: retryDuration,
         }),
       });
       const data = await res.json();
-      setShowTestPopup(false);
       if (data.status === "done") {
         showPopup("success", "Test Call Sent!", `Test call dispatched to ${testNumber}`);
+        setTestNumber("");
       } else {
         showPopup("error", "Failed", data.message || "Test call could not be sent");
       }
@@ -174,501 +385,349 @@ export default function VoiceCampaign() {
     setTestCallLoading(false);
   };
 
-  // ==============================
-  // SEND CAMPAIGN — no limit, all valid numbers go
-  // ==============================
-  const sendCampaign = async () => {
-    if (loading) return;
-    setLoading(true);
-    setShowConfirm(false);
+  const inputClass =
+    "w-full h-[30px] border border-gray-400 rounded-sm px-2 text-[9px] outline-none focus:border-[#3F51B5] focus:ring-1 focus:ring-[#3F51B5]/20 bg-white";
+  const labelClass = "text-[12px] font-semibold text-gray-700 mb-1 block";
 
-    const numberList = getValidNumbers(numbers);
-    if (numberList.length === 0) { showPopup("error", "Error", "Please enter valid 10 digit numbers"); setLoading(false); return; }
-    if (!selectedMediaId) { showPopup("error", "Error", "Please select a voice file"); setLoading(false); return; }
-    if (!callerId) { showPopup("error", "Error", "Please select a caller ID"); setLoading(false); return; }
-
-    try {
-      const res = await fetch(`${BASE}/send-bulk-voice/`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          user_id: userId(), numbers: numberList,
-          media_file_id: selectedMediaId, caller_id: callerId,
-          plan_id: voicePlan, call_type: callType,
-          campaign_name: campaignName,
-          retry_attempt: retryAttempt, retry_duration: retryDuration,
-        }),
-      });
-      const data = await res.json();
-if (data.status === "done") {
-
-  showPopup(
-    "success",
-    "Campaign Sent! 🚀",
-    "Your voice campaign has been dispatched successfully.",
-    [
-      ["Total", data.total],
-      ["Success", data.success],
-      ["Failed", data.failed],
-      ["Invalid", data.invalid],
-    ]
-  );
-
-  setNumbers("");
-  setSelectedMediaId("");
-
-} else if (data.status === "pending") {
-
-  showPopup(
-    "success",
-    "Campaign Pending ⏳",
-    "Large campaign received successfully. It will complete in approximately 8-10 minutes.",
-    [
-      ["Total Numbers", data.total],
-      ["Status", "Pending"],
-    ]
-  );
-
-  setNumbers("");
-  setSelectedMediaId("");
-
-} else {
-
-  showPopup(
-    "error",
-    "Error",
-    data.message || "Something went wrong"
-  );
-}
-    } catch {
-      showPopup("error", "Network Error", "Please check your connection and try again");
-    }
-    setLoading(false);
-  };
-
-  // ==============================
-  // SCHEDULE CAMPAIGN — no limit
-  // ==============================
-  const handleSchedule = async () => {
-    if (!scheduleDate || !scheduleTime) { showPopup("error", "Error", "Please select date and time"); return; }
-    const numberList = getValidNumbers(numbers);
-    if (numberList.length === 0) { showPopup("error", "Error", "Please enter valid 10 digit numbers"); return; }
-    if (!selectedMediaId) { showPopup("error", "Error", "Please select a voice file"); return; }
-    if (!callerId) { showPopup("error", "Error", "Please select a caller ID"); return; }
-
-    try {
-      setScheduleLoading(true);
-      const res = await fetch(`${BASE}/schedule-campaign/`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          user_id: userId(), numbers: numberList,
-          media_file_id: selectedMediaId, caller_id: callerId,
-          plan_id: voicePlan, call_type: callType,
-          campaign_name: campaignName,
-          scheduled_at: `${scheduleDate}T${scheduleTime}`,
-          retry_attempt: retryAttempt, retry_duration: retryDuration,
-        }),
-      });
-      const data = await res.json();
-      if (data.status === "scheduled") {
-        setShowSchedulePopup(false);
-        showPopup(
-          "success",
-          "Campaign Scheduled! ✅",
-          `Will run on ${scheduleDate} at ${scheduleTime}`,
-          [["Total Numbers", data.total]]
-        );
-        setNumbers(""); setSelectedMediaId("");
-      } else {
-        showPopup("error", "Error", data.message || "Something went wrong");
-      }
-    } catch {
-      showPopup("error", "Network Error", "Please check your connection and try again");
-    }
-    setScheduleLoading(false);
-  };
-
-  const validCount = getValidNumbers(numbers).length;
-
-  // ==============================
-  // RENDER
-  // ==============================
   return (
-    <div className="min-h-screen bg-[#f5f5f5] p-2">
+    <div className="min-h-screen bg-[#f4f5f8]">
+      <div className="max-w-[1800px]">
+        <h1 className="text-[16px] font-semibold text-gray-800">Create Campaign</h1>
+        <div className=" bg-gray-200 w-full my-2" />
 
-      <div className="bg-white rounded-[22px] border border-[#ef7d9f] overflow-hidden shadow-md">
-
-        {/* HEADER */}
-        <div className="px-7 py-5 border-b border-gray-200 bg-[#fafafa]">
-          <h1 className="text-[26px] font-bold text-gray-700 tracking-wide">Compose Voice Call</h1>
-        </div>
-
-        <div className="p-7">
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-7">
-
-            {/* CALL TYPE */}
-            <div>
-              <label className="text-[14px] text-gray-500 mb-2 block font-medium">Call Type</label>
-              <select value={callType} onChange={(e) => setCallType(e.target.value)}
-                className="w-full h-[54px] border border-gray-300 rounded-xl px-4 outline-none focus:border-pink-400 shadow-sm">
-                <option value="2">Transactional</option>
-                <option value="1">Promotional</option>
-              </select>
-            </div>
-
-            {/* VOICE PLAN */}
-            <div>
-              <label className="text-[14px] text-gray-500 mb-2 block font-medium">Voice Plan</label>
-              <select value={voicePlan} onChange={(e) => setVoicePlan(e.target.value)}
-                className="w-full h-[54px] border border-gray-300 rounded-xl px-4 outline-none focus:border-pink-400 shadow-sm">
-                <option value="1">Delivery Base 15</option>
-                <option value="2">Delivery Base 30</option>
-              </select>
-            </div>
-
-            {/* CALLER ID DROPDOWN */}
-            <div>
-              <label className="text-[14px] text-gray-500 mb-2 block font-medium">
-                Caller ID
-                <span
-                  onClick={loadCallerIds}
-                  className="ml-3 text-pink-500 cursor-pointer text-[12px] underline"
-                >🔄 Refresh</span>
-              </label>
-
-              {callerIds.length === 0 ? (
-                <div className="bg-yellow-50 border border-yellow-300 text-yellow-700 rounded-xl px-4 py-3 text-[13px]">
-                  No Caller IDs found. Please add from <strong>Audio File</strong> section.
+        <div className="grid grid-cols-1 lg:grid-cols-[1.15fr_1fr] gap-2 items-start">
+          {/* LEFT: FORM */}
+          <div className="bg-white border border-gray-200 border-t-2 border-t-[#3F51B5] border-l-3 border-l-[#dfe0e4] border-r-3 border-r-[#dfe0e4] border-b-3 border-b-[#dfe0e4] rounded-lg p-4  ">
+            <div className="space-y-2.5">
+              <div className="flex items-center gap-6 flex-wrap">
+                <span className={labelClass + " mb-0 w-fit"}>
+                  Credit Type<span className="text-red-500">*</span>
+                </span>
+                <div className="flex items-center gap-6">
+                  <Radio checked={creditType === "trans"} onChange={() => setCreditType("trans")} label="Trans" />
                 </div>
-              ) : (
-                <select
-                  value={callerId}
-                  onChange={(e) => setCallerId(e.target.value)}
-                  className="w-full h-[54px] border border-gray-300 rounded-xl px-4 outline-none focus:border-pink-400 shadow-sm"
-                >
-                  <option value="">Select Caller ID</option>
-                  {callerIds.map((c) => (
-                    <option key={c.id} value={c.number}>
-                      {c.name}- {c.number}
-                    </option>
-                  ))}
+              </div>
+
+              <div>
+                <label className={labelClass}>
+                  Caller ID<span className="text-red-500">*</span>
+                </label>
+                {callerIds.length === 0 ? (
+                  <div className="bg-blue-50 border border-blue-300 text-gray-700 rounded-lg px-2 py-2 text-[13px]">
+                    No Caller IDs found. Please add one from the Audio File section.
+                  </div>
+                ) : (
+                  <select value={callerId} onChange={(e) => setCallerId(e.target.value)} className={inputClass}>
+                    <option value="">Select Service Number</option>
+                    {callerIds.map((c) => (
+                      <option key={c.id} value={c.number}>
+                        {c.name} - {c.number}
+                      </option>
+                    ))}
+                  </select>
+                )}
+              </div>
+
+              <div>
+                <label className={labelClass}>Additional CallerID</label>
+                <input
+                  value={additionalCallerId}
+                  onChange={(e) => setAdditionalCallerId(e.target.value)}
+                  className={inputClass}
+                />
+              </div>
+
+              <div>
+                <label className={labelClass}>
+                  Call Type<span className="text-red-500">*</span>
+                </label>
+                <select value={campaignType} onChange={(e) => setCampaignType(e.target.value)} className={inputClass}>
+                  <option value="obd">OBD Campaign</option>
                 </select>
-              )}
+              </div>
+              <div>
+                <label className={labelClass}>
+                  Name<span className="text-red-500">*</span>
+                </label>
 
-              {callerId && (
-                <div className="mt-2 bg-[#e95d96] h-[34px] rounded-lg flex items-center px-4 text-white font-semibold text-[13px] shadow">
-                  📞 {callerId}
+                <input
+                  value={campaignName}
+                  maxLength={30}
+                  onChange={(e) => setCampaignName(e.target.value)}
+                  placeholder="Max 30 Character"
+                  className={`${inputClass} !bg-[#ffe4c4] !text-gray-500 placeholder:!text-gray-500`}
+                />
+              </div>
+
+              <div>
+                <label className={labelClass}>Voice File</label>
+                {mediaFiles.length === 0 ? (
+                  <div className="bg-blue-50 border border-blue-300 text-gray-700 rounded-lg px-4 py-2 text-[13px]">
+                    No voice files found. Please upload one from the Audio File section first.
+                  </div>
+                ) : (
+                  <select value={selectedMediaId} onChange={(e) => setSelectedMediaId(e.target.value)} className={inputClass}>
+                    <option value="">Select Voice File</option>
+                    {mediaFiles.map((f) => (
+                      <option key={f.id} value={f.voice_file_id}>
+                        {f.name}
+                      </option>
+                    ))}
+                  </select>
+                )}
+              </div>
+
+              <div>
+                <label className={labelClass}>Retries</label>
+                <select value={retryAttempt} onChange={(e) => setRetryAttempt(e.target.value)} className={inputClass}>
+                  <option value="0">0</option>
+                  <option value="1">1</option>
+                  <option value="2">2</option>
+                </select>
+              </div>
+
+              <div>
+                <label className={labelClass}>Retry Duration</label>
+                <select value={retryDuration} onChange={(e) => setRetryDuration(e.target.value)} className={inputClass}>
+                  <option value="0">Immediate</option>
+                  <option value="15">15 Min</option>
+                  <option value="30">30 Min</option>
+                  <option value="60">1 Hour</option>
+                </select>
+              </div>
+
+              <div>
+                <div className="flex items-center gap-8 flex-wrap">
+                  <span className={labelClass + " mb-0 w-fit"}>
+                    Schedule<span className="text-red-500">*</span>
+                  </span>
+                  <div className="flex items-center gap-6 flex-wrap">
+                    <Radio checked={scheduleMode === "now"} onChange={() => setScheduleMode("now")} label="Now" />
+                    <Radio checked={scheduleMode === "later"} onChange={() => setScheduleMode("later")} label="Later" />
+                    <Radio checked={scheduleMode === "calendar"} onChange={() => setScheduleMode("calendar")} label="Calendar" />
+                  </div>
                 </div>
-              )}
 
-              <div className="flex flex-wrap gap-3 mt-5">
-                <button onClick={() => setShowUploadPopup(true)}
-                  className="bg-[#e95d96] hover:scale-105 duration-300 text-white px-5 h-[44px] rounded-xl flex items-center gap-2 text-[13px] shadow-lg">
-                  <FaUsers /> File
-                </button>
-                <button onClick={() => setShowGroupPopup(true)}
-                  className="bg-[#34c7f3] hover:scale-105 duration-300 text-white px-5 h-[44px] rounded-xl flex items-center gap-2 text-[13px] shadow-lg">
-                  <FaLayerGroup /> Group
-                </button>
-                <button onClick={() => setShowTestPopup(true)}
-                  className="bg-[#39d65d] hover:scale-105 duration-300 text-white px-5 h-[44px] rounded-xl flex items-center gap-2 text-[13px] shadow-lg">
-                  📞 Testing Call
-                </button>
+                {scheduleMode === "later" && (
+                  <div className="flex items-center gap-2 mt-3">
+                    <span className="text-[13px] text-gray-500">Send after</span>
+                    <select
+                      value={laterMinutes}
+                      onChange={(e) => setLaterMinutes(e.target.value)}
+                      className="h-[38px] border border-gray-300 rounded-lg px-2 text-[13px]"
+                    >
+                      <option value="15">15 min</option>
+                      <option value="30">30 min</option>
+                      <option value="60">1 hour</option>
+                      <option value="120">2 hours</option>
+                    </select>
+                  </div>
+                )}
+
+                {scheduleMode === "calendar" && (
+                  <div className="flex items-center gap-3 mt-3">
+                    <input
+                      type="date"
+                      value={scheduleDate}
+                      onChange={(e) => setScheduleDate(e.target.value)}
+                      className="h-[38px] border border-gray-300 rounded-lg px-2 text-[13px]"
+                    />
+                    <input
+                      type="time"
+                      value={scheduleTime}
+                      onChange={(e) => setScheduleTime(e.target.value)}
+                      className="h-[38px] border border-gray-300 rounded-lg px-2 text-[13px]"
+                    />
+                  </div>
+                )}
+              </div>
+
+              <div>
+                <label className={labelClass}>Campaign Expire Time</label>
+                <input value={expireTime} onChange={(e) => setExpireTime(e.target.value)} className={inputClass} />
               </div>
             </div>
 
-            {/* CAMPAIGN NAME */}
-            <div>
-              <label className="text-[14px] text-gray-500 mb-2 block font-medium">Campaign Name</label>
-              <input value={campaignName} onChange={(e) => setCampaignName(e.target.value)}
-                className="w-full h-[54px] border border-gray-300 rounded-xl px-4 outline-none focus:border-pink-400 shadow-sm" />
-            </div>
-
+            <button
+              onClick={handleRunClick}
+              disabled={loading}
+              className="mt-4 bg-[#3F51B5] hover:bg-[#32408f] text-white font-semibold px-9 h-[40px] rounded-lg flex items-center gap-2 disabled:opacity-60"
+            >
+              {loading && <Loader2 size={16} className="animate-spin" />}
+              {loading ? "Running..." : "Run"}
+            </button>
           </div>
 
-          {/* NUMBERS */}
-          <div className="mt-8">
-            <div className="flex items-center gap-2 mb-3">
-              <h2 className="text-[17px] text-gray-700 font-semibold">Numbers</h2>
-              <span className="text-gray-400 text-[13px]">({validCount} valid)</span>
-            </div>
-            <textarea
-              value={numbers}
-              onChange={handleNumbersChange}
-              onBlur={handleNumbersBlur}
-              placeholder="Enter Your Number "
-              className="w-full h-[240px] border border-gray-300 rounded-2xl p-5 outline-none resize-none focus:border-pink-400 text-[14px] shadow-sm"
-            />
-          </div>
-
-          {/* VOICE FILE */}
-          <div className="mt-8">
-            <label className="text-[14px] text-gray-500 mb-2 block font-medium">
-              Select Voice File
-              <span onClick={loadMediaFiles} className="ml-3 text-pink-500 cursor-pointer text-[12px] underline">
-                🔄 Refresh
-              </span>
-            </label>
-            {mediaFiles.length === 0 ? (
-              <div className="bg-yellow-50 border border-yellow-300 text-yellow-700 rounded-xl px-4 py-3 text-[13px]">
-                No voice files found. Please upload from <strong>Audio File</strong> section first.
-              </div>
-            ) : (
-              <select value={selectedMediaId} onChange={(e) => setSelectedMediaId(e.target.value)}
-                className="w-full h-[54px] border border-gray-300 rounded-xl px-4 outline-none focus:border-pink-400 shadow-sm">
-                <option value="">Select Voice File</option>
-                {mediaFiles.map((f) => (
-                  <option key={f.id} value={f.voice_file_id}>{f.name}</option>
-                ))}
+          {/* RIGHT: COLLAPSIBLE PANELS */}
+          <div className="space-y-4">
+            <Section title="File" isOpen={openPanels.file} onToggle={() => togglePanel("file")}>
+              <label className={labelClass}>
+                Upload Data<span className="text-red-500">*</span>
+              </label>
+              <select value={uploadFileType} onChange={(e) => setUploadFileType(e.target.value)} className={inputClass}>
+                <option value="excel">Excel File</option>
+                <option value="csv">CSV File</option>
               </select>
-            )}
-          </div>
 
-          {/* RETRIES */}
-          <div className="mt-6">
-            <label className="text-[14px] text-gray-500 mb-2 block font-medium">Retries</label>
-            <select value={retryAttempt} onChange={(e) => setRetryAttempt(e.target.value)}
-              className="w-full h-[54px] border border-gray-300 rounded-xl px-4 outline-none focus:border-pink-400 shadow-sm">
-              <option value="0">0</option>
-              <option value="1">1</option>
-              <option value="2">2</option>
-            </select>
-          </div>
+              <div className="flex justify-end mt-3">
+                <button
+                  type="button"
+                  onClick={downloadSampleFile}
+                  className="flex items-center gap-8 text-[13px] font-semibold text-gray-700"
+                >
+                  Download Sample File - <FileSpreadsheet size={39} className="text-green-600" />
+                </button>
+              </div>
 
-          {/* RETRY DURATION */}
-          <div className="mt-4">
-            <label className="text-[14px] text-gray-500 mb-2 block font-medium">Retry Duration</label>
-            <select value={retryDuration} onChange={(e) => setRetryDuration(e.target.value)}
-              className="w-full h-[54px] border border-gray-300 rounded-xl px-4 outline-none focus:border-pink-400 shadow-sm">
-              <option value="0">Immediate</option>
-              <option value="15">15 Min</option>
-              <option value="30">30 Min</option>
-              <option value="60">1 Hour</option>
-            </select>
-          </div>
+              <input
+                ref={fileInputRef}
+                type="file"
+                accept={acceptFor(uploadFileType)}
+                className="hidden"
+                onChange={handleFileSelected}
+              />
 
-          {/* ACTION BUTTONS */}
-          <div className="flex flex-wrap gap-5 mt-10 items-center">
-            <button onClick={() => setShowConfirm(true)} disabled={loading}
-              className="bg-[#e95d96] hover:scale-105 duration-300 text-white px-9 h-[50px] rounded-xl flex items-center gap-3 shadow-lg font-semibold disabled:opacity-50">
-              {loading ? <Loader2 size={16} className="animate-spin" /> : <FaPaperPlane />}
-              {loading ? "Sending..." : "Send Now"}
-            </button>
-            <span className="text-gray-500 text-[15px] font-medium">or</span>
-            <button onClick={() => setShowSchedulePopup(true)}
-              className="bg-[#3d2d83] hover:scale-105 duration-300 text-white px-9 h-[50px] rounded-xl flex items-center gap-3 shadow-lg font-semibold">
-              <FaCalendarAlt /> Schedule Now
-            </button>
-          </div>
+              <div className="mt-4 bg-gradient-to-b from-gray-50 to-gray-100 border border-gray-200 rounded-lg p-4">
+                <div className="flex gap-3">
+                  <button
+                    type="button"
+                    onClick={handleChooseClick}
+                    className="bg-[#3F51B5] text-white px-4 h-[38px] rounded-lg flex items-center gap-1.5 text-[13px] font-semibold"
+                  >
+                    <Plus size={14} /> Choose
+                  </button>
+                  <button
+                    type="button"
+                    onClick={handleCancelFile}
+                    className="bg-gray-200 text-gray-600 px-4 h-[38px] rounded-lg flex items-center gap-1.5 text-[13px] font-semibold"
+                  >
+                    <X size={14} /> Cancel
+                  </button>
+                </div>
+                {uploadedFileName && (
+                  <p className="text-[13px] text-gray-600 mt-3">
+                    📄 {uploadedFileName} — <span className="font-semibold text-gray-800">{numbers.length}</span> valid numbers
+                  </p>
+                )}
+              </div>
+            </Section>
 
+            <Section title="SMS" isOpen={openPanels.sms} onToggle={() => togglePanel("sms")}>
+              <label className="inline-flex items-center gap-2 mb-3 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={smsEnabled}
+                  onChange={(e) => setSmsEnabled(e.target.checked)}
+                  style={{ accentColor: ACCENT }}
+                  className="w-4 h-4"
+                />
+                <span className="text-[13px] text-gray-700 font-medium">Send SMS along with this campaign</span>
+              </label>
+              {smsEnabled && (
+                <>
+                  <textarea
+                    value={smsMessage}
+                    maxLength={160}
+                    onChange={(e) => setSmsMessage(e.target.value)}
+                    placeholder="Enter SMS message"
+                    className="w-full h-[90px] border border-gray-300 rounded-lg p-3 text-[13px] outline-none focus:border-[#3F51B5] resize-none"
+                  />
+                  <p className="text-[11px] text-gray-400 text-right mt-1">{smsMessage.length}/160</p>
+                </>
+              )}
+            </Section>
+
+            {/* TEST CALL — single row: label + input + Dial button, matching reference screenshot */}
+            <Section title="Test Call" isOpen={openPanels.test} onToggle={() => togglePanel("test")}>
+              <div className="flex items-center gap-4">
+                <label className="text-[13px] font-semibold text-gray-700 whitespace-nowrap">
+                  Mobile No
+                </label>
+                <input
+                  type="text"
+                  inputMode="numeric"
+                  maxLength={10}
+                  value={testNumber}
+                  onChange={(e) => setTestNumber(e.target.value.replace(/\D/g, "").slice(0, 10))}
+                  className="flex-1 h-[38px] border border-gray-300 rounded-md px-3 text-[13px] outline-none focus:border-[#3F51B5] focus:ring-1 focus:ring-[#3F51B5]/20 bg-gray-100"
+                />
+                <button
+                  type="button"
+                  onClick={handleTestCall}
+                  disabled={testCallLoading}
+                  className="bg-[#3F51B5] hover:bg-[#32408f] text-white font-semibold px-6 h-[38px] rounded-md flex items-center gap-2 text-[13px] disabled:opacity-60 whitespace-nowrap"
+                >
+                  {testCallLoading && <Loader2 size={14} className="animate-spin" />}
+                  {testCallLoading ? "Dialing..." : "Dial"}
+                </button>
+              </div>
+            </Section>
+          </div>
         </div>
       </div>
 
-      {/* FILE UPLOAD POPUP */}
-      {showUploadPopup && (
-        <div className="fixed inset-0 bg-black/40 backdrop-blur-sm z-50 flex items-center justify-center">
-          <div className="bg-white w-[520px] rounded-[18px] overflow-hidden shadow-2xl">
-            <div className="bg-[#e95d96] text-white px-6 py-4 flex justify-between items-center">
-              <h2 className="text-[20px] font-semibold">Upload Numbers File</h2>
-              <button onClick={() => setShowUploadPopup(false)} className="text-[24px]">×</button>
-            </div>
-            <div className="p-6">
-              <div className="border border-gray-300 rounded-xl p-4">
-                <input type="file" accept=".csv,.xls,.xlsx,.txt"
-                  onChange={(e) => setUploadFile(e.target.files[0])} className="mb-4" />
-                <p className="text-[13px] text-gray-500">Upload CSV / TXT file. Numbers in first column. Only valid 10 digit numbers will be kept.</p>
-              </div>
-              <div className="flex justify-end gap-3 mt-7">
-                <button onClick={() => setShowUploadPopup(false)}
-                  className="bg-[#ff5c5c] text-white px-6 h-[42px] rounded-lg font-medium">Close</button>
-                <button onClick={handleFileUpload}
-                  className="bg-[#35c2f2] text-white px-6 h-[42px] rounded-lg font-medium">Upload</button>
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* GROUP POPUP */}
-      {showGroupPopup && (
-        <div className="fixed inset-0 bg-black/40 backdrop-blur-sm z-50 flex items-center justify-center">
-          <div className="bg-white w-[650px] rounded-[18px] overflow-hidden shadow-2xl">
-            <div className="bg-[#35c2f2] text-white px-6 py-4 flex justify-between items-center">
-              <h2 className="text-[20px] font-semibold">Upload Group</h2>
-              <button onClick={() => setShowGroupPopup(false)} className="text-[24px]">×</button>
-            </div>
-            <div className="p-6">
-              <div className="flex gap-6 mb-6">
-                <div>
-                  <p className="text-[14px] text-gray-600 mb-2">From Range :</p>
-                  <input type="number" value={fromRange} onChange={(e) => setFromRange(e.target.value)}
-                    className="w-[180px] h-[45px] border border-gray-300 rounded-lg px-3 outline-none" />
-                </div>
-                <div>
-                  <p className="text-[14px] text-gray-600 mb-2">To Range :</p>
-                  <input type="number" value={toRange} onChange={(e) => setToRange(e.target.value)}
-                    className="w-[180px] h-[45px] border border-gray-300 rounded-lg px-3 outline-none" />
-                </div>
-              </div>
-              <div className="border border-gray-300 rounded-xl overflow-hidden">
-                <table className="w-full">
-                  <thead className="bg-[#f5f5f5]">
-                    <tr>
-                      <th className="text-left p-4 border-b">Group Name</th>
-                      <th className="text-left p-4 border-b">Total Contacts</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {groups.map((g, i) => (
-                      <tr key={i} className="border-b hover:bg-gray-50 cursor-pointer">
-                        <td className="p-4">{g.name}</td>
-                        <td className="p-4">{g.total}</td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-              <div className="flex justify-end gap-3 mt-7">
-                <button onClick={() => setShowGroupPopup(false)}
-                  className="bg-[#ff5c5c] text-white px-6 h-[42px] rounded-lg font-medium">Close</button>
-                <button onClick={() => setShowGroupPopup(false)}
-                  className="bg-[#35c2f2] text-white px-6 h-[42px] rounded-lg font-medium">Select Group</button>
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* TEST CALL POPUP */}
-      {showTestPopup && (
-        <div className="fixed inset-0 bg-black/40 backdrop-blur-sm z-50 flex items-center justify-center">
-          <div className="bg-white w-[420px] rounded-[18px] overflow-hidden shadow-2xl">
-            <div className="bg-[#39d65d] text-white px-6 py-4 flex justify-between items-center">
-              <h2 className="text-[20px] font-semibold">Testing Call</h2>
-              <button onClick={() => setShowTestPopup(false)} className="text-[24px]">×</button>
-            </div>
-            <div className="p-6">
-              <p className="text-[15px] text-gray-600 mb-3">Enter Mobile No. for test (10 digits)</p>
-              <input
-                type="text"
-                inputMode="numeric"
-                maxLength={10}
-                value={testNumber}
-                onChange={(e) => setTestNumber(e.target.value.replace(/\D/g, "").slice(0, 10))}
-                className="w-full h-[48px] border border-gray-300 rounded-xl px-4 outline-none focus:border-green-400"
-              />
-              <div className="flex justify-end gap-3 mt-7">
-                <button onClick={() => setShowTestPopup(false)}
-                  className="bg-[#ff5c5c] text-white px-6 h-[42px] rounded-lg font-medium">Close</button>
-                <button onClick={handleTestCall} disabled={testCallLoading}
-                  className="bg-[#39d65d] disabled:opacity-60 text-white px-6 h-[42px] rounded-lg font-medium flex items-center gap-2">
-                  {testCallLoading && <Loader2 size={14} className="animate-spin" />}
-                  {testCallLoading ? "Sending..." : "Test Call"}
-                </button>
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* SCHEDULE POPUP */}
-      {showSchedulePopup && (
-        <div className="fixed inset-0 bg-black/40 backdrop-blur-sm z-50 flex items-center justify-center">
-          <div className="bg-white w-[500px] rounded-[22px] overflow-hidden shadow-2xl">
-            <div className="bg-[#3d2d83] text-white px-6 py-4 flex justify-between items-center">
-              <h2 className="text-[22px] font-semibold">Schedule Campaign</h2>
-              <button onClick={() => setShowSchedulePopup(false)} className="text-[24px]">×</button>
-            </div>
-            <div className="p-7">
-              <div className="mb-6">
-                <label className="text-[15px] text-gray-600 mb-2 block font-medium">Select Date</label>
-                <input type="date" value={scheduleDate} onChange={(e) => setScheduleDate(e.target.value)}
-                  className="w-full h-[52px] border border-gray-300 rounded-xl px-4 outline-none focus:border-[#3d2d83]" />
-              </div>
-              <div className="mb-6">
-                <label className="text-[15px] text-gray-600 mb-2 block font-medium">Select Time</label>
-                <input type="time" value={scheduleTime} onChange={(e) => setScheduleTime(e.target.value)}
-                  className="w-full h-[52px] border border-gray-300 rounded-xl px-4 outline-none focus:border-[#3d2d83]" />
-              </div>
-              <div className="bg-[#f5f5f5] rounded-xl p-4 mb-7">
-                <p className="text-[14px] text-gray-700">Scheduled Date :</p>
-                <p className="text-[#3d2d83] font-semibold mt-1">{scheduleDate || "Not Selected"}</p>
-                <p className="text-[14px] text-gray-700 mt-3">Scheduled Time :</p>
-                <p className="text-[#3d2d83] font-semibold mt-1">{scheduleTime || "Not Selected"}</p>
-              </div>
-              <div className="flex justify-end gap-3">
-                <button onClick={() => setShowSchedulePopup(false)}
-                  className="bg-[#ff5c5c] text-white px-6 h-[44px] rounded-xl font-semibold">Close</button>
-                <button onClick={handleSchedule} disabled={scheduleLoading}
-                  className="bg-[#3d2d83] hover:bg-[#2c2063] disabled:opacity-50 text-white px-6 h-[44px] rounded-xl font-semibold flex items-center gap-2">
-                  {scheduleLoading && <Loader2 size={14} className="animate-spin" />}
-                  {scheduleLoading ? "Scheduling..." : "Schedule"}
-                </button>
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* CONFIRM POPUP */}
+      {/* CONFIRM MODAL */}
       {showConfirm && (
-        <div className="fixed inset-0 bg-black/40 backdrop-blur-sm flex items-center justify-center z-50">
-          <div className="bg-white rounded-[24px] p-10 w-[390px] shadow-2xl text-center">
-            <h1 className="text-[30px] font-bold text-gray-700 mb-3">Confirm Send</h1>
-            <p className="text-gray-500 text-[14px] leading-7">Are you sure you want to send this campaign?</p>
-            <div className="mt-4 bg-gray-50 rounded-xl p-4 text-left space-y-1">
-              <p className="text-[13px] text-gray-500">
-                Caller ID: <span className="font-semibold text-[#e95d96]">{callerId || "—"}</span>
+        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50">
+          <div className="bg-white rounded-2xl p-8 w-[380px] shadow-2xl text-center">
+            <h2 className="text-[22px] font-bold text-gray-800 mb-2">Confirm Send</h2>
+            <p className="text-gray-500 text-[14px]">Are you sure you want to run this campaign now?</p>
+            <div className="mt-4 bg-gray-50 rounded-lg p-4 text-left space-y-1 text-[13px] text-gray-600">
+              <p>
+                Caller ID: <span className="font-semibold">{callerId || "—"}</span>
               </p>
-              <p className="text-[13px] text-gray-500">
-                Numbers: <span className="font-semibold text-gray-700">{validCount}</span>
+              <p>
+                Numbers: <span className="font-semibold">{numbers.length}</span>
               </p>
-              <p className="text-[13px] text-gray-500">
-                Voice File: <span className="font-semibold text-gray-700">{selectedMediaId || "—"}</span>
+              <p>
+                Name: <span className="font-semibold">{campaignName || "—"}</span>
               </p>
             </div>
-            <div className="flex justify-center gap-4 mt-8">
-              <button onClick={sendCampaign}
-                className="bg-[#35c2f2] text-white px-8 h-[48px] rounded-xl font-semibold hover:scale-105 duration-300 shadow-lg">Yes, Send</button>
-              <button onClick={() => setShowConfirm(false)}
-                className="bg-[#ff5c5c] text-white px-8 h-[48px] rounded-xl font-semibold hover:scale-105 duration-300 shadow-lg">Cancel</button>
+            <div className="flex justify-center gap-3 mt-6">
+              <button onClick={runCampaign} className="bg-[#3F51B5] text-white px-6 h-[42px] rounded-lg font-semibold">
+                Yes, Run
+              </button>
+              <button onClick={() => setShowConfirm(false)} className="bg-gray-200 text-gray-700 px-6 h-[42px] rounded-lg font-semibold">
+                Cancel
+              </button>
             </div>
           </div>
         </div>
       )}
 
-      {/* PREMIUM RESULT POPUP — replaces alert() everywhere above */}
+      {/* RESULT POPUP */}
       {popup && (
         <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-[60] p-4">
-          <div className="bg-white w-full max-w-[360px] rounded-3xl p-6 text-center shadow-2xl">
+          <div className="bg-white w-full max-w-[360px] rounded-2xl p-6 text-center shadow-2xl">
             <div className="flex justify-center mb-4">
-              {popupType === "error"
-                ? <AlertCircle size={55} className="text-red-500" />
-                : <CheckCircle2 size={55} className="text-green-500" />}
+              {popupType === "error" ? (
+                <AlertCircle size={50} className="text-red-500" />
+              ) : (
+                <CheckCircle2 size={50} className="text-green-500" />
+              )}
             </div>
-            <h2 className="text-[24px] font-bold mb-2">{popupTitle}</h2>
-            <p className="text-[15px] text-gray-600">{popupMsg}</p>
-
+            <h2 className="text-[20px] font-bold mb-1">{popupTitle}</h2>
+            <p className="text-[14px] text-gray-600">{popupMsg}</p>
             {popupStats && (
-              <div className="grid grid-cols-2 gap-2 mt-5">
+              <div className="grid grid-cols-2 gap-2 mt-4">
                 {popupStats.map(([label, val]) => (
-                  <div key={label} className="bg-gray-50 rounded-xl px-3 py-2">
+                  <div key={label} className="bg-gray-50 rounded-lg px-3 py-2">
                     <p className="text-[11px] text-gray-400">{label}</p>
-                    <p className="text-[18px] font-bold text-gray-700">{val}</p>
+                    <p className="text-[16px] font-bold text-gray-700">{val}</p>
                   </div>
                 ))}
               </div>
             )}
-
             <button
               onClick={() => setPopup(false)}
-              className={`mt-6 px-6 py-2 rounded-full text-white text-[15px] font-semibold ${popupType === "error" ? "bg-red-500" : "bg-green-500"}`}
-            >OK</button>
+              className={`mt-5 px-6 py-2 rounded-full text-white text-[14px] font-semibold ${popupType === "error" ? "bg-red-500" : "bg-green-500"
+                }`}
+            >
+              OK
+            </button>
           </div>
         </div>
       )}
-
     </div>
   );
 }

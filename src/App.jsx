@@ -37,7 +37,7 @@ function App() {
         <Route element={<Header />}>
 
           {/* ✅ ALL ROLES: admin, reseller, user */}
-          <Route path="/dashboard" element={<Dashboard />} />
+          {/* <Route path="/dashboard" element={<Dashboard />} /> */}
           <Route path="/voicecampaign" element={<VoiceCampaign />} />
           <Route path="/campaignreports" element={<CampaignReports />} />
           <Route path="/credithistory" element={<CreditHistory />} />

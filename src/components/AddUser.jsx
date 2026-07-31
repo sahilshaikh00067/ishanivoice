@@ -7,7 +7,6 @@ import {
   Phone,
   Building2,
   MapPin,
-  ShieldCheck,
   UserPlus,
   AlertCircle,
   CheckCircle2,
@@ -98,265 +97,109 @@ const AddUser = () => {
     setSubmitting(false);
   };
 
+  const fields = [
+    { name: "username", label: "Username", type: "text", icon: User, placeholder: "e.g. ABCD" },
+    { name: "password", label: "Password", type: "password", icon: Lock, placeholder: "Minimum 2 characters" },
+    { name: "email", label: "Email Address", type: "email", icon: Mail, placeholder: "name@company.com" },
+    { name: "mobile", label: "Mobile Number", type: "text", icon: Phone, placeholder: "10-digit mobile number" },
+    { name: "company", label: "Company Name", type: "text", icon: Building2, placeholder: "Company or business name" },
+    { name: "city", label: "City", type: "text", icon: MapPin, placeholder: "e.g. Mumbai" },
+  ];
+
   return (
 
-    <div className="min-h-screen bg-[#f8f8f8] p-4 md:p-7">
+    <div className="min-h-screen bg-[#f4f5f8] p-4 md:p-8">
+
+      {/* BREADCRUMB */}
+      <div className="max-w-[1100px] mx-auto mb-4 flex items-center gap-2 text-[13px] text-slate-500">
+        <span>Users</span>
+        <span className="text-slate-300">/</span>
+        <span className="text-slate-700 font-medium">Add New</span>
+      </div>
 
       {/* MAIN CARD */}
-      <div className="max-w-[1300px] mx-auto bg-white rounded-[30px] border border-[#ef7fa4] overflow-hidden shadow-sm">
+      <div className="max-w-[1100px] mx-auto bg-white rounded-2xl border border-slate-200 shadow-[0_1px_2px_rgba(16,24,40,0.05)] overflow-hidden">
 
         {/* HEADER */}
-        <div className="px-8 py-7 border-b border-[#f5c8d5] bg-[#fffafb]">
+        <div className="px-7 py-6 border-b border-slate-200 flex items-center gap-4">
 
-          <div className="flex items-center gap-4">
+          <div className="w-[46px] h-[46px] rounded-xl bg-indigo-50 border border-indigo-100 flex items-center justify-center shrink-0">
+            <UserPlus size={22} className="text-indigo-600" />
+          </div>
 
-            <div className="w-[62px] h-[61px] rounded-2xl bg-[#fff0f4] border border-[#ef7fa4] flex items-center justify-center">
-
-              <UserPlus
-                size={28}
-                className="text-[#EA7A9A]"
-              />
-
-            </div>
-
-            <div>
-
-              <h1 className="text-[30px] font-[700] text-[#EA7A9A]">
-                Add User
-              </h1>
-
-              <p className="text-[14px] text-gray-500 mt-1">
-                Create Reseller or User Account
-              </p>
-
-            </div>
-
+          <div>
+            <h1 className="text-[19px] font-[700] text-slate-900 leading-tight">
+              Add User
+            </h1>
+            <p className="text-[13px] text-slate-500 mt-0.5">
+              Create a new Reseller or User account under your organization
+            </p>
           </div>
 
         </div>
 
         {/* BODY */}
-        <div className="p-8">
+        <div className="p-7">
 
-          <form
-            onSubmit={handleSubmit}
-          >
+          <form onSubmit={handleSubmit}>
 
             {/* GRID */}
-            <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6">
+            <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-x-6 gap-y-5">
 
-              {/* USERNAME */}
-              <div>
-
-                <label className="label">
-                  Username
-                </label>
-
-                <div className="inputBox">
-
-                  <User
-                    size={18}
-                    className="icon"
-                  />
-
-                  <input
-                    type="text"
-                    name="username"
-                    value={form.username}
-                    placeholder="Enter Username"
-                    onChange={handleChange}
-                    className="input"
-                  />
-
+              {fields.map(({ name, label, type, icon: Icon, placeholder }) => (
+                <div key={name}>
+                  <label className="block mb-1.5 text-[13px] font-medium text-slate-700">
+                    {label}
+                  </label>
+                  <div className="flex items-center h-[44px] rounded-lg border border-slate-300 bg-white px-3 gap-2.5 transition focus-within:border-indigo-500 focus-within:ring-4 focus-within:ring-indigo-50">
+                    <Icon size={16} className="text-slate-400 shrink-0" />
+                    <input
+                      type={type}
+                      name={name}
+                      value={form[name]}
+                      placeholder={placeholder}
+                      onChange={handleChange}
+                      className="w-full h-full bg-transparent outline-none text-[14px] text-slate-900 placeholder:text-slate-400"
+                    />
+                  </div>
                 </div>
+              ))}
 
-              </div>
-
-              {/* PASSWORD */}
+              {/* ROLE — segmented toggle */}
               <div>
-
-                <label className="label">
-                  Password
-                </label>
-
-                <div className="inputBox">
-
-                  <Lock
-                    size={18}
-                    className="icon"
-                  />
-
-                  <input
-                    type="password"
-                    name="password"
-                    value={form.password}
-                    placeholder="Enter Password"
-                    onChange={handleChange}
-                    className="input"
-                  />
-
-                </div>
-
-              </div>
-
-              {/* EMAIL */}
-              <div>
-
-                <label className="label">
-                  Email Address
-                </label>
-
-                <div className="inputBox">
-
-                  <Mail
-                    size={18}
-                    className="icon"
-                  />
-
-                  <input
-                    type="email"
-                    name="email"
-                    value={form.email}
-                    placeholder="Enter Email Address"
-                    onChange={handleChange}
-                    className="input"
-                  />
-
-                </div>
-
-              </div>
-
-              {/* MOBILE */}
-              <div>
-
-                <label className="label">
-                  Mobile Number
-                </label>
-
-                <div className="inputBox">
-
-                  <Phone
-                    size={18}
-                    className="icon"
-                  />
-
-                  <input
-                    type="text"
-                    name="mobile"
-                    value={form.mobile}
-                    placeholder="Enter Mobile Number"
-                    onChange={handleChange}
-                    className="input"
-                  />
-
-                </div>
-
-              </div>
-
-              {/* COMPANY */}
-              <div>
-
-                <label className="label">
-                  Company Name
-                </label>
-
-                <div className="inputBox">
-
-                  <Building2
-                    size={18}
-                    className="icon"
-                  />
-
-                  <input
-                    type="text"
-                    name="company"
-                    value={form.company}
-                    placeholder="Enter Company Name"
-                    onChange={handleChange}
-                    className="input"
-                  />
-
-                </div>
-
-              </div>
-
-              {/* CITY */}
-              <div>
-
-                <label className="label">
-                  City
-                </label>
-
-                <div className="inputBox">
-
-                  <MapPin
-                    size={18}
-                    className="icon"
-                  />
-
-                  <input
-                    type="text"
-                    name="city"
-                    value={form.city}
-                    placeholder="Enter City"
-                    onChange={handleChange}
-                    className="input"
-                  />
-
-                </div>
-
-              </div>
-
-              {/* ROLE */}
-              <div>
-
-                <label className="label">
+                <label className="block mb-1.5 text-[13px] font-medium text-slate-700">
                   User Role
                 </label>
-
-                <div className="inputBox">
-
-                  <ShieldCheck
-                    size={18}
-                    className="icon"
-                  />
-
-                  <select
-                    name="role"
-                    value={form.role}
-                    onChange={handleChange}
-                    className="input bg-transparent"
-                  >
-
-                    <option value="User">
-                      User
-                    </option>
-
-                    <option value="Reseller">
-                      Reseller
-                    </option>
-
-                  </select>
-
+                <div className="h-[44px] rounded-lg border border-slate-300 bg-slate-50 p-1 flex gap-1">
+                  {["User", "Reseller"].map((r) => (
+                    <button
+                      type="button"
+                      key={r}
+                      onClick={() => setForm((f) => ({ ...f, role: r }))}
+                      className={`flex-1 rounded-md text-[13.5px] font-medium transition ${
+                        form.role === r
+                          ? "bg-white text-indigo-700 shadow-sm border border-slate-200"
+                          : "text-slate-500 hover:text-slate-700"
+                      }`}
+                    >
+                      {r}
+                    </button>
+                  ))}
                 </div>
-
               </div>
 
             </div>
 
             {/* BUTTON */}
-            <div className="mt-8 flex justify-end">
-
+            <div className="mt-8 pt-6 border-t border-slate-100 flex justify-end">
               <button
                 type="submit"
                 disabled={submitting}
-                className="h-[56px] px-10 rounded-2xl bg-[#EA7A9A] hover:bg-[#e3688b] duration-300 disabled:opacity-60 text-white text-[16px] font-semibold shadow-sm flex items-center gap-2"
+                className="h-[44px] px-6 rounded-lg bg-indigo-600 hover:bg-indigo-700 duration-200 disabled:opacity-60 text-white text-[14px] font-semibold shadow-sm flex items-center gap-2"
               >
-                {submitting && <Loader2 size={18} className="animate-spin" />}
-                {submitting ? "Adding..." : "Add User"}
-
+                {submitting && <Loader2 size={16} className="animate-spin" />}
+                {submitting ? "Adding User..." : "Add User"}
               </button>
-
             </div>
 
           </form>
@@ -367,73 +210,22 @@ const AddUser = () => {
 
       {/* PREMIUM POPUP — replaces alert() */}
       {popup && (
-        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4">
-          <div className="bg-white w-full max-w-[320px] rounded-3xl p-6 text-center shadow-2xl">
+        <div className="fixed inset-0 bg-slate-900/40 flex items-center justify-center z-50 p-4">
+          <div className="bg-white w-full max-w-[320px] rounded-2xl p-6 text-center shadow-xl border border-slate-200">
             <div className="flex justify-center mb-4">
               {popupType === "error"
-                ? <AlertCircle size={55} className="text-red-500" />
-                : <CheckCircle2 size={55} className="text-green-500" />}
+                ? <AlertCircle size={44} className="text-red-500" />
+                : <CheckCircle2 size={44} className="text-emerald-500" />}
             </div>
-            <h2 className="text-[26px] font-bold mb-2">{popupType === "error" ? "Error" : "Success"}</h2>
-            <p className="text-[16px] text-gray-600">{popupMsg}</p>
+            <h2 className="text-[18px] font-bold text-slate-900 mb-1">{popupType === "error" ? "Something went wrong" : "Success"}</h2>
+            <p className="text-[14px] text-slate-500">{popupMsg}</p>
             <button
               onClick={() => setPopup(false)}
-              className={`mt-5 px-6 py-2 rounded-full text-white text-[15px] font-semibold ${popupType === "error" ? "bg-red-500" : "bg-green-500"}`}
+              className={`mt-5 px-6 h-[38px] rounded-lg text-white text-[14px] font-semibold w-full ${popupType === "error" ? "bg-red-500 hover:bg-red-600" : "bg-emerald-600 hover:bg-emerald-700"}`}
             >OK</button>
           </div>
         </div>
       )}
-
-      {/* CSS */}
-      <style>{`
-
-        .label{
-          display:block;
-          margin-bottom:10px;
-          font-size:14px;
-          font-weight:600;
-          color:#EA7A9A;
-        }
-
-        .inputBox{
-          width:100%;
-          height:58px;
-          border:1px solid #ef7fa4;
-          border-radius:18px;
-          background:#fffafb;
-          display:flex;
-          align-items:center;
-          padding:0 18px;
-          transition:0.3s;
-        }
-
-        .inputBox:focus-within{
-          border:1px solid #EA7A9A;
-          background:white;
-          box-shadow:0 0 0 4px rgba(234,122,154,0.10);
-        }
-
-        .icon{
-          color:#EA7A9A;
-          min-width:18px;
-        }
-
-        .input{
-          width:100%;
-          height:100%;
-          border:none;
-          outline:none;
-          background:transparent;
-          padding-left:14px;
-          font-size:15px;
-          color:#111827;
-        }
-
-        .input::placeholder{
-          color:#9ca3af;
-        }
-
-      `}</style>
 
     </div>
   );
