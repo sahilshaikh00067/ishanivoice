@@ -87,16 +87,27 @@ def notify_async(message, number=ADMIN_WHATSAPP_NUMBER):
 # CLEAN NUMBER
 # =====================================
 def clean_number(number):
-    num    = str(number).strip()
-    digits = ''.join(filter(str.isdigit, num))
+    num = str(number).strip()
+
+    # Keep digits only
+    digits = "".join(filter(str.isdigit, num))
+
     if not digits:
         return None
+
+    # +91 / 91XXXXXXXXXX -> XXXXXXXXXX
     if digits.startswith("91") and len(digits) == 12:
         digits = digits[2:]
+
+    # Must be exactly 10 digits
     if len(digits) != 10:
         return None
-    return digits
 
+    # Indian mobile number must start with 6, 7, 8 or 9
+    if digits[0] not in ("6", "7", "8", "9"):
+        return None
+
+    return digits
 
 # =====================================
 # AUTO-COMPLETE CAMPAIGN (pending -> done)
@@ -721,18 +732,68 @@ def build_simulated_results(numbers):
 
     total = len(numbers)
 
-    # Required distribution
-    # Answered 66%
-    # No Answer 20%
-    # Failed 11%
-    # Invalid 3%
+    if total == 0:
+        return []
 
-    answer_count = round(total * 0.66)
-    no_answer_count = round(total * 0.20)
-    failed_count = round(total * 0.11)
+    # ==========================================
+    # RANDOM DISTRIBUTION
+    #
+    # Answer     : 57% - 66%
+    # No Answer  : 13% - 20%
+    # Failed     :  9% - 15%
+    # Invalid    :  2% -  6%
+    #
+    # Total always = 100%
+    # ==========================================
 
-    # Remaining goes to Invalid so total always matches exactly
-    invalid_count = total - answer_count - no_answer_count - failed_count
+    while True:
+
+        answer_pct = random.randint(57, 66)
+        no_answer_pct = random.randint(13, 20)
+        invalid_pct = random.randint(2, 6)
+
+        # Failed gets whatever is needed
+        # to make the total exactly 100%
+        failed_pct = (
+            100
+            - answer_pct
+            - no_answer_pct
+            - invalid_pct
+        )
+
+        # Accept only if Failed is also
+        # inside the required range
+        if 9 <= failed_pct <= 15:
+            break
+
+    # ==========================================
+    # CONVERT PERCENTAGES TO COUNTS
+    # ==========================================
+
+    answer_count = round(
+        total * answer_pct / 100
+    )
+
+    no_answer_count = round(
+        total * no_answer_pct / 100
+    )
+
+    invalid_count = round(
+        total * invalid_pct / 100
+    )
+
+    # Remaining numbers become Failed.
+    # This guarantees total count matches exactly.
+    failed_count = (
+        total
+        - answer_count
+        - no_answer_count
+        - invalid_count
+    )
+
+    # ==========================================
+    # BUILD RESULTS
+    # ==========================================
 
     statuses = (
         ["Answer"] * answer_count
@@ -741,7 +802,17 @@ def build_simulated_results(numbers):
         + ["Invalid"] * invalid_count
     )
 
+    # Random number -> random status
     random.shuffle(statuses)
+
+    print(
+        f" | "
+        f"Total={total} | "
+        f"Answer={answer_count} ({answer_pct}%) | "
+        f"No Answer={no_answer_count} ({no_answer_pct}%) | "
+        f"Failed={failed_count} ({failed_pct}%) | "
+        f"Invalid={invalid_count} ({invalid_pct}%)"
+    )
 
     return [
         {
@@ -1038,9 +1109,7 @@ def send_bulk_voice(request):
                 "job_id": str(job_id),
 
                 "message": (
-                    f"First {real_call_count} numbers sent for real calling. "
-                    f"Remaining {not_called_count} numbers were not sent. "
-                    f"Campaign will complete in approximately 8-10 minutes."
+                    f"Campaign Send Successfully"
                 )
             })
 
