@@ -147,7 +147,8 @@ if DATABASE_URL:
     DATABASES = {
         "default": dj_database_url.config(
             default=DATABASE_URL,
-            conn_max_age=600,
+            conn_max_age=0,        # har request naya connection — stale SSL error khatam
+            conn_health_checks=True,
             ssl_require=True,
         )
     }
