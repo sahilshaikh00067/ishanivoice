@@ -77,7 +77,7 @@ MIDDLEWARE = [
 CORS_ALLOWED_ORIGINS = [
     "https://voicechannel.co.in",
     "https://www.voicechannel.co.in",
-    "https://latestvoice.vercel.app",
+    "https://ishanivoice.vercel.app",
 
     # Local React/Vite
     "http://localhost:5173",
@@ -93,7 +93,7 @@ CORS_ALLOW_CREDENTIALS = True
 CSRF_TRUSTED_ORIGINS = [
     "https://voicechannel.co.in",
     "https://www.voicechannel.co.in",
-    "https://latestvoice.vercel.app",
+    "https://ishanivoice.vercel.app",
 
     # Local React/Vite
     "http://localhost:5173",
