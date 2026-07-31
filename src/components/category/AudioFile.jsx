@@ -114,7 +114,6 @@ export default function AudioFile() {
 
   // ── VOICE FILE STATES ──
   const [friendlyName, setFriendlyName] = useState("");
-  const [mediaUrl,     setMediaUrl]     = useState("");   // OBD server filename e.g. Today.wav
   const [audioFile,    setAudioFile]    = useState(null);
   const [mediaList,    setMediaList]    = useState([]);
   const [loadingList,  setLoadingList]  = useState(false);
@@ -176,7 +175,6 @@ export default function AudioFile() {
   };
 
   const handleUpload = async () => {
-    if (!mediaUrl.trim()) { showPopup("error", "Please enter voice filename (e.g. Today.wav)"); return; }
     if (!audioFile)  { showPopup("error", "Please choose the audio file to upload"); return; }
     if (!friendlyName.trim()) { showPopup("error", "Please enter a file name"); return; }
     if (!selectedType) { showPopup("error", "Please select a type"); return; }
@@ -193,7 +191,7 @@ export default function AudioFile() {
         body: JSON.stringify({
           user_id: userId(),
           name: friendlyName,
-          voice_file: mediaUrl,
+          voice_file: audioFile.name,
           media_url: hostedUrl,
           type: selectedType,
         }),
@@ -218,7 +216,6 @@ export default function AudioFile() {
 
   const resetForm = () => {
     setFriendlyName("");
-    setMediaUrl("");
     setSelectedType("");
     setAudioFile(null);
     setPreviewUrl("");
@@ -502,6 +499,8 @@ export default function AudioFile() {
         ════════════════════════════════ */}
         <div className="bg-white border border-gray-200 rounded-xl p-6 mb-5">
 
+          <p className="text-[15px] font-semibold text-[#1d2756] mb-3">Option 1 : Upload</p>
+
           {!isAdmin && (
             <div className="bg-purple-50 border border-purple-300 rounded-2xl px-5 py-2 mb-4 flex gap-3">
               <ShieldCheck size={22} className="text-purple-500 mt-1 shrink-0" />
@@ -514,25 +513,6 @@ export default function AudioFile() {
               </div>
             </div>
           )}
-
-          {/* VOICE FILENAME (must match OBD server filename) */}
-          <div className="mb-5">
-            <label className="text-[13px] text-gray-700 mb-1 block">
-              Voice Filename (as on OBD Server) <span className="text-red-500">*</span>
-            </label>
-            <input
-              type="text"
-              value={mediaUrl}
-              onChange={(e) => setMediaUrl(e.target.value)}
-              placeholder="Only .wav & .mp3 e.g. abc.wav, xyz.mp3"
-              className="w-full max-w-[540px] h-[41px] border border-gray-300 rounded-lg px-4 outline-none focus:border-[#3F51B5] text-[14px]"
-            />
-            <p className="text-[12px] text-gray-400 mt-1">
-              Must exactly match the filename already uploaded on the OBD server (capital/small letters matter too).
-            </p>
-          </div>
-
-          <p className="text-[15px] font-semibold text-[#1d2756] mb-3">Option 1 : Upload</p>
 
           {/* CHOOSE FILE */}
           <div className="mb-1">
@@ -635,6 +615,110 @@ export default function AudioFile() {
           )}
 
         </div>
+
+        {/* ═══════════════════════════════
+            CALLER IDs
+        ════════════════════════════════ */}
+        <div className="bg-white border border-gray-200 rounded-xl p-6 mb-5">
+
+          <p className="text-[15px] font-semibold text-[#1d2756] mb-3">Option 2 : Caller IDs</p>
+
+          <div className="bg-green-50 border border-green-300 rounded-2xl px-5 py-4 mb-6 flex gap-3">
+            <Phone size={22} className="text-green-600 mt-1 shrink-0" />
+            <div>
+              <p className="text-[15px] font-bold text-green-700 mb-1">Caller ID Setup</p>
+              <p className="text-[13px] text-green-600 leading-6">
+                Add caller IDs here as admin. These will show in the dropdown on the Campaign page.<br />
+                Example: <strong>+918071390635</strong>
+              </p>
+            </div>
+          </div>
+
+          <div className="flex flex-wrap gap-3 mb-4">
+            <input
+              type="text" value={callerName}
+              onChange={(e) => setCallerName(e.target.value)}
+              placeholder="Label (e.g. Main Number)"
+              className="h-[50px] w-[240px] border border-gray-300 rounded-xl px-4 outline-none focus:border-green-400 text-[14px]"
+            />
+            <input
+              type="text" value={callerNumber}
+              onChange={(e) => setCallerNumber(e.target.value)}
+              placeholder="Number (e.g. +918071390635)"
+              className="h-[50px] w-[260px] border border-gray-300 rounded-xl px-4 outline-none focus:border-green-400 text-[14px]"
+            />
+            <button
+              onClick={handleAddCaller}
+              className="bg-gradient-to-r from-green-400 to-green-500 text-white px-6 h-[50px] rounded-xl text-[15px] font-semibold hover:scale-105 duration-300 shadow-md"
+            >
+              + Add Caller ID
+            </button>
+          </div>
+
+          <div className="border border-green-300 bg-white rounded-2xl overflow-hidden">
+            <div className="flex justify-between items-center px-5 py-4 border-b">
+              <h2 className="text-[20px] font-bold text-gray-700">Saved Caller IDs</h2>
+              <button onClick={loadCallerIds} className="text-green-500 text-[13px] underline">🔄 Refresh</button>
+            </div>
+            <div className="overflow-x-auto">
+              <table className="w-full min-w-[400px]">
+                <thead className="bg-gray-50">
+                  <tr>
+                    <th className="px-5 py-3 text-left text-[13px] font-semibold text-gray-500 border-b">#</th>
+                    <th className="px-5 py-3 text-left text-[13px] font-semibold text-gray-500 border-b">Label</th>
+                    <th className="px-5 py-3 text-left text-[13px] font-semibold text-gray-500 border-b">Number</th>
+                    <th className="px-5 py-3 text-left text-[13px] font-semibold text-gray-500 border-b">Action</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {callerLoading ? (
+                    <tr><td colSpan="4" className="text-center py-6 text-gray-400">Loading...</td></tr>
+                  ) : callerList.length === 0 ? (
+                    <tr><td colSpan="4" className="text-center py-6 text-gray-400">No caller IDs yet — add one above</td></tr>
+                  ) : callerList.map((c, i) => (
+                    <tr key={c.id} className="border-b hover:bg-gray-50">
+                      <td className="px-5 py-3 text-[13px] text-gray-400">{i + 1}</td>
+                      <td className="px-5 py-3 text-[14px] font-medium text-gray-700">{c.name}</td>
+                      <td className="px-5 py-3 text-[14px] font-semibold text-green-600">{c.number}</td>
+                      <td className="px-5 py-3">
+                        <button
+                          onClick={() => handleDeleteCaller(c.id)}
+                          className="bg-red-100 text-red-500 w-[32px] h-[32px] rounded-lg flex items-center justify-center hover:bg-red-200 duration-200"
+                        >
+                          <Trash2 size={14} />
+                        </button>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+
+        </div>
+
+        {/* INSTRUCTIONS */}
+        {/* <div className="bg-white border border-pink-200 rounded-2xl">
+          <div className="px-5 py-4 border-b">
+            <h2 className="text-[22px] font-bold text-gray-700">Instructions</h2>
+          </div>
+          <div className="p-4 space-y-4">
+            {[
+              { color: "bg-[#ff744f]", bg: "bg-[#f8e4df]", rule: "Rule 1", text: "First upload the audio file on the OBD server, then enter that exact filename here." },
+              { color: "bg-[#16b7d7]", bg: "bg-[#a9e3ef]", rule: "Rule 2", text: "Also upload the same audio file here so it can be played and downloaded from this page." },
+              { color: "bg-pink-500",  bg: "bg-[#f8edf5]", rule: "Rule 3", text: "The filename must match exactly — capital/small letters must match too." },
+              { color: "bg-green-500", bg: "bg-[#e4f3e4]", rule: "Rule 4", text: "Enter the full number for Caller ID, including the country code." },
+            ].map((r) => (
+              <div key={r.rule} className="flex gap-4">
+                <div className={`w-3 h-3 rounded-full ${r.color} mt-6 shrink-0`}></div>
+                <div className={`${r.bg} rounded-2xl px-6 py-4 w-full`}>
+                  <p className="text-[13px] text-gray-500 mb-1">{r.rule}</p>
+                  <p className="text-[16px] font-semibold text-[#202c58]">{r.text}</p>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div> */}
 
       </div>
 
