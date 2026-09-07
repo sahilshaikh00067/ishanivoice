@@ -8,11 +8,13 @@ from pathlib import Path
 import os
 import dj_database_url
 
+
 # ---------------------------------------------------
 # BASE
 # ---------------------------------------------------
 
 BASE_DIR = Path(__file__).resolve().parent.parent
+
 
 # ---------------------------------------------------
 # SECURITY
@@ -28,10 +30,19 @@ DEBUG = os.getenv("DEBUG", "False") == "True"
 ALLOWED_HOSTS = [
     "voicechannel.co.in",
     "www.voicechannel.co.in",
+
+    # New domain
+    "infravoice.co.in",
+    "www.infravoice.co.in",
+
+    # New IP
+    "154.210.187.100",
+
     ".onrender.com",
     "localhost",
     "127.0.0.1",
 ]
+
 
 # ---------------------------------------------------
 # APPS
@@ -44,10 +55,12 @@ INSTALLED_APPS = [
     "django.contrib.sessions",
     "django.contrib.messages",
     "django.contrib.staticfiles",
+
     "rest_framework",
     "corsheaders",
     "api",
 ]
+
 
 # ---------------------------------------------------
 # MIDDLEWARE
@@ -55,55 +68,91 @@ INSTALLED_APPS = [
 
 MIDDLEWARE = [
     "corsheaders.middleware.CorsMiddleware",
+
     "django.middleware.security.SecurityMiddleware",
+
     "whitenoise.middleware.WhiteNoiseMiddleware",
+
     "django.contrib.sessions.middleware.SessionMiddleware",
+
     "django.middleware.common.CommonMiddleware",
+
     "django.middleware.csrf.CsrfViewMiddleware",
+
     "django.contrib.auth.middleware.AuthenticationMiddleware",
+
     "django.contrib.messages.middleware.MessageMiddleware",
+
     "django.middleware.clickjacking.XFrameOptionsMiddleware",
 ]
+
 
 # ---------------------------------------------------
 # CORS
 # ---------------------------------------------------
 
 CORS_ALLOWED_ORIGINS = [
+
+    # Existing domain
     "https://voicechannel.co.in",
     "https://www.voicechannel.co.in",
+
+    # New domain
+    "https://infravoice.co.in",
+    "https://www.infravoice.co.in",
+
+    # Vercel
     "https://ishanivoice.vercel.app",
 
     # Local React/Vite
     "http://localhost:5173",
     "http://127.0.0.1:5173",
+
 ]
 
 CORS_ALLOW_CREDENTIALS = True
+
 
 # ---------------------------------------------------
 # CSRF
 # ---------------------------------------------------
 
 CSRF_TRUSTED_ORIGINS = [
+
+    # Existing domain
     "https://voicechannel.co.in",
     "https://www.voicechannel.co.in",
+
+    # New domain
+    "https://infravoice.co.in",
+    "https://www.infravoice.co.in",
+
+    # Vercel
     "https://ishanivoice.vercel.app",
 
     # Local React/Vite
     "http://localhost:5173",
     "http://127.0.0.1:5173",
+
 ]
+
+
 # ---------------------------------------------------
 # HTTPS
 # ---------------------------------------------------
 
-SECURE_PROXY_SSL_HEADER = ("HTTP_X_FORWARDED_PROTO", "https")
+SECURE_PROXY_SSL_HEADER = (
+    "HTTP_X_FORWARDED_PROTO",
+    "https",
+)
 
 if not DEBUG:
     SECURE_SSL_REDIRECT = True
+
     SESSION_COOKIE_SECURE = True
+
     CSRF_COOKIE_SECURE = True
+
 
 # ---------------------------------------------------
 # URLS
@@ -113,6 +162,7 @@ ROOT_URLCONF = "backend.urls"
 
 WSGI_APPLICATION = "backend.wsgi.application"
 
+
 # ---------------------------------------------------
 # TEMPLATES
 # ---------------------------------------------------
@@ -120,17 +170,23 @@ WSGI_APPLICATION = "backend.wsgi.application"
 TEMPLATES = [
     {
         "BACKEND": "django.template.backends.django.DjangoTemplates",
+
         "DIRS": [],
+
         "APP_DIRS": True,
+
         "OPTIONS": {
             "context_processors": [
                 "django.template.context_processors.request",
+
                 "django.contrib.auth.context_processors.auth",
+
                 "django.contrib.messages.context_processors.messages",
             ],
         },
     },
 ]
+
 
 # ---------------------------------------------------
 # DATABASE
@@ -139,40 +195,67 @@ TEMPLATES = [
 DATABASE_URL = os.getenv("DATABASE_URL")
 
 if DATABASE_URL:
+
     DATABASES = {
         "default": dj_database_url.config(
             default=DATABASE_URL,
-            conn_max_age=0,        # har request naya connection — stale SSL error khatam
+
+            # Har request par fresh connection
+            conn_max_age=0,
+
             conn_health_checks=True,
+
             ssl_require=True,
         )
     }
+
 else:
+
     DATABASES = {
         "default": {
             "ENGINE": "django.db.backends.sqlite3",
+
             "NAME": BASE_DIR / "db.sqlite3",
         }
     }
+
 
 # ---------------------------------------------------
 # PASSWORDS
 # ---------------------------------------------------
 
 AUTH_PASSWORD_VALIDATORS = [
+
     {
-        "NAME": "django.contrib.auth.password_validation.UserAttributeSimilarityValidator",
+        "NAME": (
+            "django.contrib.auth.password_validation."
+            "UserAttributeSimilarityValidator"
+        ),
     },
+
     {
-        "NAME": "django.contrib.auth.password_validation.MinimumLengthValidator",
+        "NAME": (
+            "django.contrib.auth.password_validation."
+            "MinimumLengthValidator"
+        ),
     },
+
     {
-        "NAME": "django.contrib.auth.password_validation.CommonPasswordValidator",
+        "NAME": (
+            "django.contrib.auth.password_validation."
+            "CommonPasswordValidator"
+        ),
     },
+
     {
-        "NAME": "django.contrib.auth.password_validation.NumericPasswordValidator",
+        "NAME": (
+            "django.contrib.auth.password_validation."
+            "NumericPasswordValidator"
+        ),
     },
+
 ]
+
 
 # ---------------------------------------------------
 # INTERNATIONALIZATION
@@ -183,18 +266,22 @@ LANGUAGE_CODE = "en-us"
 TIME_ZONE = "UTC"
 
 USE_I18N = True
+
 USE_TZ = True
+
 
 # ---------------------------------------------------
 # STATIC FILES
 # ---------------------------------------------------
 
 STATIC_URL = "static/"
+
 STATIC_ROOT = BASE_DIR / "staticfiles"
 
 STATICFILES_STORAGE = (
     "whitenoise.storage.CompressedManifestStaticFilesStorage"
 )
+
 
 # ---------------------------------------------------
 # DEFAULT PK
